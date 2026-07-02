@@ -3,6 +3,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenRefreshView
+from django.conf import settings
 from django.contrib.auth import authenticate, login as auth_login, logout as auth_logout
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
@@ -13,6 +15,27 @@ from django.db.models import Sum, Q
 from django.utils import timezone
 from decimal import Decimal
 import uuid
+
+
+def _set_jwt_cookies(response, access_token, refresh_token=None):
+    response.set_cookie(
+        'access_token',
+        access_token,
+        httponly=True,
+        secure=not settings.DEBUG,
+        samesite='Lax',
+        max_age=60 * 60,
+    )
+    if refresh_token:
+        response.set_cookie(
+            'refresh_token',
+            refresh_token,
+            httponly=True,
+            secure=not settings.DEBUG,
+            samesite='Lax',
+            max_age=24 * 60 * 60,
+        )
+    return response
 
 from .models import (
     User, Wallet, Merchant, Biller, Transaction, Notification, IdentityVerification,
@@ -382,7 +405,7 @@ class RegisterView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         refresh = RefreshToken.for_user(user)
-        return Response({
+        response = Response({
             'message': 'Registration successful.',
             'user': UserProfileSerializer(user).data,
             'tokens': {
@@ -390,6 +413,8 @@ class RegisterView(generics.CreateAPIView):
                 'access': str(refresh.access_token),
             }
         }, status=status.HTTP_201_CREATED)
+        _set_jwt_cookies(response, str(refresh.access_token), str(refresh))
+        return response
 
 
 class LoginView(APIView):
@@ -427,7 +452,7 @@ class LoginView(APIView):
             )
 
         refresh = RefreshToken.for_user(user)
-        return Response({
+        response = Response({
             'message': 'Login successful.',
             'user': UserProfileSerializer(user).data,
             'tokens': {
@@ -435,12 +460,14 @@ class LoginView(APIView):
                 'access': str(refresh.access_token),
             }
         }, status=status.HTTP_200_OK)
+        _set_jwt_cookies(response, str(refresh.access_token), str(refresh))
+        return response
 
 
 class LogoutView(APIView):
     """
     POST /api/auth/logout/
-    Blacklist the refresh token to log out.
+    Blacklist the refresh token and clear JWT cookies.
     """
     permission_classes = [IsAuthenticated]
 
@@ -449,9 +476,24 @@ class LogoutView(APIView):
             refresh_token = request.data.get('refresh')
             token = RefreshToken(refresh_token)
             token.blacklist()
-            return Response({'message': 'Logged out successfully.'}, status=status.HTTP_200_OK)
+            response = Response({'message': 'Logged out successfully.'}, status=status.HTTP_200_OK)
+            response.delete_cookie('access_token')
+            response.delete_cookie('refresh_token')
+            return response
         except Exception:
             return Response({'error': 'Invalid or expired token.'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AuthTokenRefreshView(TokenRefreshView):
+    """POST /api/auth/token/refresh/ — Refresh access token and update cookies."""
+
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == 200:
+            refresh = request.data.get('refresh')
+            access_token = response.data.get('access')
+            _set_jwt_cookies(response, access_token, refresh)
+        return response
 
 
 class MeView(generics.RetrieveUpdateAPIView):
