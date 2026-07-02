@@ -11,23 +11,35 @@ A Django wallet application built with Django REST Framework and Tailwind CSS.
 ## Setup
 
 1. Open a terminal in the project root:
-   ```powershell
-   cd : e_wallet
-   ```
+   - Windows PowerShell:
+     ```powershell
+     cd C:\Users\Admin\Documents\BIU_Y3\S1\System_Analysis_Class\assignment\e_wallet
+     ```
+   - macOS / Linux:
+     ```bash
+     cd ~/Documents/BIU_Y3/S1/System_Analysis_Class/assignment/e_wallet
+     ```
 
 2. Create and activate a virtual environment (if not already activated):
-   ```powershell
-   python -m venv venv
-   .\venv\Scripts\Activate.ps1
-   ```
+   - Windows PowerShell:
+     ```powershell
+     python -m venv venv
+     .\venv\Scripts\Activate.ps1
+     ```
+   - macOS / Linux:
+     ```bash
+     python3 -m venv venv
+     source venv/bin/activate
+     ```
 
 3. Install dependencies:
-   ```powershell
-   pip install django djangorestframework djangorestframework-simplejwt dj-database-url python-dotenv psycopg2-binary
-   ```
+   - Windows / macOS / Linux:
+     ```bash
+     pip install django djangorestframework djangorestframework-simplejwt dj-database-url python-dotenv psycopg2-binary
+     ```
 
    If you prefer, create a `requirements.txt` file with these packages and install with:
-   ```powershell
+   ```bash
    pip install -r requirements.txt
    ```
 
