@@ -67,6 +67,12 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a7 7 0 017 7v3a7 7 0 11-14 0V9a7 7 0 017-7z"/><path d="M8 12h8"/></svg>
           KYC Verification
         </a>
+        {% if request.user.is_superuser or request.user.is_staff or request.user.role == 'admin' %}
+        <a href="{% url 'kyc_review' %}" class="py-2 sidebar-link flex gap-1 text-white {% if active_page == 'kyc_review' %}active{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12H5a2 2 0 00-2 2v4a2 2 0 002 2h4"/><path d="M15 12h4a2 2 0 012 2v4a2 2 0 01-2 2h-4"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/></svg>
+          Review KYC
+        </a>
+        {% endif %}
 
         <p class="px-4 text-xs font-semibold text-slate-500 uppercase tracking-widest mt-5 mb-3">Account</p>
 

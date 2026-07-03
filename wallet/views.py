@@ -9,6 +9,7 @@ from django.contrib.auth import authenticate, login as auth_login, logout as aut
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.core.exceptions import PermissionDenied
 from django.views import View
 from django.db import transaction as db_transaction
 from django.db.models import Sum, Q
@@ -392,6 +393,15 @@ class ProfileView(LoginRequiredMixin, View):
         })
 
 
+class AdminRequiredMixin(LoginRequiredMixin):
+    login_url = '/login/'
+
+    def dispatch(self, request, *args, **kwargs):
+        if not (request.user.is_staff or request.user.is_superuser or request.user.role == 'admin'):
+            raise PermissionDenied('You do not have permission to access this page.')
+        return super().dispatch(request, *args, **kwargs)
+
+
 class KYCVerificationView(LoginRequiredMixin, View):
     """GET/POST /kyc/ — KYC document submission and status."""
     login_url = '/login/'
@@ -447,6 +457,54 @@ class KYCVerificationView(LoginRequiredMixin, View):
             'verification': verification,
             'active_page': 'kyc',
         })
+
+
+class KYCReviewView(AdminRequiredMixin, View):
+    """GET/POST /kyc-review/ — Admin-only KYC approval and rejection."""
+    template_name = 'wallet/kyc_review.html'
+
+    def get(self, request):
+        pending = IdentityVerification.objects.order_by('-created_at')
+        return render(request, self.template_name, {
+            'pending_submissions': pending,
+            'active_page': 'kyc_review',
+        })
+
+    def post(self, request):
+        action = request.POST.get('action')
+        selected_ids = request.POST.getlist('selected')
+        submissions = IdentityVerification.objects.filter(id__in=selected_ids)
+        updated = 0
+
+        for verification in submissions:
+            if action == 'approve':
+                if verification.verification_status != 'verified':
+                    verification.verification_status = 'verified'
+                    verification.verified_at = timezone.now()
+                    verification.save(update_fields=['verification_status', 'verified_at'])
+                    Notification.objects.create(
+                        user=verification.user,
+                        title='KYC Verified',
+                        message='Your identity verification has been approved.',
+                    )
+                    updated += 1
+            elif action == 'reject':
+                if verification.verification_status != 'rejected':
+                    verification.verification_status = 'rejected'
+                    verification.verified_at = None
+                    verification.save(update_fields=['verification_status', 'verified_at'])
+                    Notification.objects.create(
+                        user=verification.user,
+                        title='KYC Rejected',
+                        message='Your identity verification has been rejected. Please resubmit valid documents.',
+                    )
+                    updated += 1
+
+        if action == 'approve':
+            messages.success(request, f'{updated} submission(s) approved.')
+        elif action == 'reject':
+            messages.success(request, f'{updated} submission(s) rejected.')
+        return redirect('kyc_review')
 
 
 # ─────────────────────────────────────────
