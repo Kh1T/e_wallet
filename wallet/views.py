@@ -14,7 +14,11 @@ from django.db import transaction as db_transaction
 from django.db.models import Sum, Q
 from django.utils import timezone
 from decimal import Decimal
+import os
 import uuid
+
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
 
 
 def _set_jwt_cookies(response, access_token, refresh_token=None):
@@ -53,7 +57,7 @@ from .serializers import (
 )
 from .forms import (
     LoginForm, RegisterForm, SendMoneyForm, TopupForm,
-    ProfileUpdateForm, ChangePasswordForm,
+    ProfileUpdateForm, ChangePasswordForm, KYCVerificationForm,
 )
 
 
@@ -144,6 +148,7 @@ class DashboardView(LoginRequiredMixin, View):
 
     def get(self, request):
         wallet = Wallet.objects.filter(user=request.user).first()
+        verification = IdentityVerification.objects.filter(user=request.user).first()
         recent_transactions = []
         received_transfers  = []
         total_income        = Decimal('0')
@@ -178,6 +183,7 @@ class DashboardView(LoginRequiredMixin, View):
 
         ctx = {
             'wallet':               wallet,
+            'verification':         verification,
             'recent_transactions':  recent_transactions,
             'received_transfers':   received_transfers,
             'total_income':         total_income,
@@ -383,6 +389,63 @@ class ProfileView(LoginRequiredMixin, View):
             'profile_form':  profile_form,
             'password_form': password_form,
             'active_page':   'profile',
+        })
+
+
+class KYCVerificationView(LoginRequiredMixin, View):
+    """GET/POST /kyc/ — KYC document submission and status."""
+    login_url = '/login/'
+    template_name = 'wallet/kyc.html'
+
+    def get(self, request):
+        verification, _ = IdentityVerification.objects.get_or_create(user=request.user)
+        initial = {
+            'full_name':     request.user.full_name,
+            'date_of_birth': verification.date_of_birth,
+            'address':       verification.address,
+            'nationality':   verification.nationality,
+            'national_id':   verification.national_id,
+        }
+        form = KYCVerificationForm(initial=initial)
+        return render(request, self.template_name, {
+            'form': form,
+            'verification': verification,
+            'active_page': 'kyc',
+        })
+
+    def post(self, request):
+        verification, _ = IdentityVerification.objects.get_or_create(user=request.user)
+        form = KYCVerificationForm(request.POST, request.FILES)
+        if form.is_valid():
+            d = form.cleaned_data
+            request.user.full_name = d['full_name']
+            request.user.save()
+            id_document = d['id_document']
+            selfie_image = d['selfie_image']
+            id_path = default_storage.save(
+                f'kyc/{request.user.id}/id_document_{uuid.uuid4().hex[:8]}.{id_document.name.split('.')[-1]}',
+                id_document
+            )
+            selfie_path = default_storage.save(
+                f'kyc/{request.user.id}/selfie_{uuid.uuid4().hex[:8]}.{selfie_image.name.split('.')[-1]}',
+                selfie_image
+            )
+            verification.date_of_birth = d['date_of_birth']
+            verification.address = d['address']
+            verification.nationality = d['nationality']
+            verification.national_id = d['national_id']
+            verification.id_document = id_path
+            verification.selfie_image = selfie_path
+            verification.verification_status = 'pending'
+            verification.verified_at = None
+            verification.save()
+            messages.success(request, 'KYC documents submitted successfully. Verification is pending.')
+            return redirect('kyc')
+
+        return render(request, self.template_name, {
+            'form': form,
+            'verification': verification,
+            'active_page': 'kyc',
         })
 
 

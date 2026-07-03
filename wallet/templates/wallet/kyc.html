@@ -1,0 +1,87 @@
+{% extends 'wallet/base.html' %}
+{% block title %}KYC Verification — NexusPay{% endblock %}
+{% block page_title %}KYC Verification{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-8">
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+      <h3 class="text-lg font-bold text-slate-800 mb-4">Verification Status</h3>
+      <div class="space-y-3 text-sm text-slate-600">
+        <div class="rounded-2xl p-4 bg-slate-50 border border-slate-200">
+          <p class="font-semibold text-slate-700">Status</p>
+          <p class="mt-2 text-xl font-semibold text-blue-600">{{ verification.verification_status|capfirst }}</p>
+        </div>
+        <div class="rounded-2xl p-4 bg-slate-50 border border-slate-200">
+          <p class="font-semibold text-slate-700">Submitted</p>
+          <p class="mt-2 text-slate-500">
+            {% if verification.created_at %}{{ verification.created_at|date:'M d, Y H:i' }}{% else %}-{% endif %}
+          </p>
+        </div>
+        <div class="rounded-2xl p-4 bg-slate-50 border border-slate-200">
+          <p class="font-semibold text-slate-700">Verified At</p>
+          <p class="mt-2 text-slate-500">{% if verification.verified_at %}{{ verification.verified_at|date:'M d, Y H:i' }}{% else %}Not yet verified{% endif %}</p>
+        </div>
+      </div>
+      {% if verification.verification_status == 'rejected' %}
+      <div class="mt-6 rounded-3xl bg-red-50 border border-red-200 p-4 text-sm text-red-700">
+        Your submission was rejected. Please upload valid documents and try again.
+      </div>
+      {% elif verification.verification_status == 'verified' %}
+      <div class="mt-6 rounded-3xl bg-emerald-50 border border-emerald-200 p-4 text-sm text-emerald-700">
+        Your KYC has been verified. You can continue using all services.
+      </div>
+      {% else %}
+      <div class="mt-6 rounded-3xl bg-blue-50 border border-blue-200 p-4 text-sm text-blue-700">
+        Your KYC verification is pending review. This may take a few moments.
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="lg:col-span-2 bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+      <h3 class="text-lg font-bold text-slate-800 mb-4">Submit Your Documents</h3>
+      <form method="post" enctype="multipart/form-data" class="space-y-6">
+        {% csrf_token %}
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div>
+            <label class="block text-sm font-semibold text-slate-700 mb-2">Full Name</label>
+            <input type="text" name="full_name" value="{{ form.full_name.value|default:'' }}" class="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" />
+            {% if form.full_name.errors %}<p class="text-red-500 text-xs mt-1">{{ form.full_name.errors.0 }}</p>{% endif %}
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-slate-700 mb-2">Date of Birth</label>
+            <input type="date" name="date_of_birth" value="{{ form.date_of_birth.value|default:'' }}" class="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" />
+            {% if form.date_of_birth.errors %}<p class="text-red-500 text-xs mt-1">{{ form.date_of_birth.errors.0 }}</p>{% endif %}
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-sm font-semibold text-slate-700 mb-2">Address</label>
+            <textarea name="address" rows="3" class="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500">{{ form.address.value|default:'' }}</textarea>
+            {% if form.address.errors %}<p class="text-red-500 text-xs mt-1">{{ form.address.errors.0 }}</p>{% endif %}
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-slate-700 mb-2">Nationality</label>
+            <input type="text" name="nationality" value="{{ form.nationality.value|default:'' }}" class="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" />
+            {% if form.nationality.errors %}<p class="text-red-500 text-xs mt-1">{{ form.nationality.errors.0 }}</p>{% endif %}
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-slate-700 mb-2">National ID Number</label>
+            <input type="text" name="national_id" value="{{ form.national_id.value|default:'' }}" class="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" />
+            {% if form.national_id.errors %}<p class="text-red-500 text-xs mt-1">{{ form.national_id.errors.0 }}</p>{% endif %}
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-sm font-semibold text-slate-700 mb-2">ID Document</label>
+            <input type="file" name="id_document" class="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" />
+            {% if form.id_document.errors %}<p class="text-red-500 text-xs mt-1">{{ form.id_document.errors.0 }}</p>{% endif %}
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-sm font-semibold text-slate-700 mb-2">Selfie Image</label>
+            <input type="file" name="selfie_image" class="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" />
+            {% if form.selfie_image.errors %}<p class="text-red-500 text-xs mt-1">{{ form.selfie_image.errors.0 }}</p>{% endif %}
+          </div>
+        </div>
+        <button type="submit" class="inline-flex items-center justify-center rounded-2xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/20 hover:bg-blue-700 transition">Submit Verification</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
