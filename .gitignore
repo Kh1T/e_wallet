@@ -7,6 +7,8 @@ __pycache__
 .Python
 env/
 venv/
+.venv/
+ENV/
 pip-log.txt
 pip-delete-this-directory.txt
 
@@ -22,14 +24,30 @@ media/
 .env.local
 .env.*
 
+# Local PostgreSQL / database files
+PSQL/
+*.sql
+*.dump
+*.backup
+
 # Static files
 # (Uncomment the line below if you are collecting static files)
 # staticfiles/
 # static/ 
+
+# Python packaging / build output
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
 
 # IDE / OS
 .vscode/
 .idea/
 *.swp
 *.DS_Store
+.DS_Store
 Thumbs.db
+Desktop.ini
