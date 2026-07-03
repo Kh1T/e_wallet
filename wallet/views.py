@@ -289,11 +289,21 @@ class TopupView(LoginRequiredMixin, View):
     """GET/POST /topup/ — Top up wallet balance."""
     login_url = '/login/'
     template_name = 'wallet/topup.html'
+    fee_amount = Decimal('0')
+
+    def _create_submission_token(self, request):
+        token = uuid.uuid4().hex
+        request.session['topup_submission_token'] = token
+        return token
 
     def get(self, request):
         wallet = Wallet.objects.filter(user=request.user).first()
         return render(request, self.template_name, {
-            'form': TopupForm(), 'wallet': wallet, 'active_page': 'topup',
+            'form': TopupForm(),
+            'wallet': wallet,
+            'active_page': 'topup',
+            'transaction_fee': self.fee_amount,
+            'submission_token': self._create_submission_token(request),
         })
 
     def post(self, request):
@@ -305,19 +315,28 @@ class TopupView(LoginRequiredMixin, View):
             return redirect('dashboard')
 
         if form.is_valid():
+            submitted_token = request.POST.get('submission_token')
+            session_token = request.session.get('topup_submission_token')
+            if not submitted_token or submitted_token != session_token:
+                messages.error(request, 'This top up request was already submitted. Please create a new one.')
+                return redirect('topup')
+
+            request.session.pop('topup_submission_token', None)
             d = form.cleaned_data
+            payment_label = dict(TopupForm.PAYMENT_CHOICES).get(d['payment_method'], d['payment_method'])
             with db_transaction.atomic():
                 tx = Transaction.objects.create(
                     wallet=wallet,
                     transaction_type='topup',
                     amount=d['amount'],
                     status='completed',
-                    description=f'Top-up via {d["payment_method"]}',
+                    description=f'Top-up via {payment_label}',
                     reference=f'TOP-{uuid.uuid4().hex[:8].upper()}',
                 )
                 Topup.objects.create(
                     transaction=tx,
                     payment_method=d['payment_method'],
+                    provider=payment_label,
                 )
                 wallet.balance += d['amount']
                 wallet.save()
@@ -331,7 +350,13 @@ class TopupView(LoginRequiredMixin, View):
             messages.success(request, f'Wallet topped up with {d["amount"]} {wallet.currency}!')
             return redirect('dashboard')
 
-        return render(request, self.template_name, {'form': form, 'wallet': wallet, 'active_page': 'topup'})
+        return render(request, self.template_name, {
+            'form': form,
+            'wallet': wallet,
+            'active_page': 'topup',
+            'transaction_fee': self.fee_amount,
+            'submission_token': request.session.get('topup_submission_token') or self._create_submission_token(request),
+        })
 
 
 class ProfileView(LoginRequiredMixin, View):

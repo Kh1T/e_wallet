@@ -30,13 +30,27 @@ class SendMoneyForm(forms.Form):
 
 
 class TopupForm(forms.Form):
+    MIN_AMOUNT = Decimal('1000')
+    MAX_AMOUNT = Decimal('10000000')
     PAYMENT_CHOICES = [
-        ('bank',    'Bank Transfer'),
-        ('card',    'Credit / Debit Card'),
-        ('aba',     'ABA Mobile'),
-        ('acleda',  'ACLEDA Mobile'),
+        ('aba_mobile',  'ABA Mobile'),
+        ('acleda_mobile', 'ACLEDA Mobile'),
+        ('bank_transfer', 'Bank Transfer'),
+        ('card', 'Credit / Debit Card'),
     ]
-    amount         = forms.DecimalField(min_value=Decimal('1.00'), max_digits=12, decimal_places=2)
+    amount = forms.DecimalField(
+        required=True,
+        min_value=MIN_AMOUNT,
+        max_value=MAX_AMOUNT,
+        max_digits=12,
+        decimal_places=0,
+        error_messages={
+            'required': 'Amount is required.',
+            'invalid': 'Amount must be numeric.',
+            'min_value': 'Minimum top up is 1,000 KHR.',
+            'max_value': 'Maximum top up is 10,000,000 KHR.',
+        },
+    )
     payment_method = forms.ChoiceField(choices=PAYMENT_CHOICES)
 
 
