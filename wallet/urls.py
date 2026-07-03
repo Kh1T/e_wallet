@@ -35,6 +35,7 @@ urlpatterns = [
     path('send/',         views.SendMoneyView.as_view(),    name='send'),
     path('topup/',        views.TopupView.as_view(),        name='topup'),
     path('profile/',      views.ProfileView.as_view(),      name='profile'),
+    path('kyc/',          views.KYCVerificationView.as_view(), name='kyc'),
 
     # ── Auth API endpoints (JWT) ────────────────────────────────────
     path('api/auth/register/',        views.RegisterView.as_view(),       name='auth-register'),
