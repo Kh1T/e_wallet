@@ -472,15 +472,51 @@ class KYCVerificationView(LoginRequiredMixin, View):
             request.user.full_name = d['full_name']
             request.user.save()
             id_document = d['id_document']
-            selfie_image = d['selfie_image']
+            
+            # Handle ID document
             id_path = default_storage.save(
-                f'kyc/{request.user.id}/id_document_{uuid.uuid4().hex[:8]}.{id_document.name.split('.')[-1]}',
+                f'kyc/{request.user.id}/id_document_{uuid.uuid4().hex[:8]}.{id_document.name.split(".")[-1]}',
                 id_document
             )
-            selfie_path = default_storage.save(
-                f'kyc/{request.user.id}/selfie_{uuid.uuid4().hex[:8]}.{selfie_image.name.split('.')[-1]}',
-                selfie_image
-            )
+            
+            # Handle selfie - either from file upload or camera capture
+            selfie_image = d.get('selfie_image')
+            selfie_image_data = request.POST.get('selfie_image_data')
+            
+            if selfie_image:
+                # File upload
+                selfie_path = default_storage.save(
+                    f'kyc/{request.user.id}/selfie_{uuid.uuid4().hex[:8]}.{selfie_image.name.split(".")[-1]}',
+                    selfie_image
+                )
+            elif selfie_image_data:
+                # Camera capture - base64 data
+                import base64
+                from django.core.files.base import ContentFile
+                
+                # Remove the data URL prefix if present
+                if ';base64,' in selfie_image_data:
+                    format, imgstr = selfie_image_data.split(';base64,')
+                    ext = format.split('/')[-1] if '/' in format else 'jpg'
+                else:
+                    imgstr = selfie_image_data
+                    ext = 'jpg'
+                
+                # Decode base64 and save
+                image_data = base64.b64decode(imgstr)
+                file_name = f'selfie_{uuid.uuid4().hex[:8]}.{ext}'
+                selfie_path = default_storage.save(
+                    f'kyc/{request.user.id}/{file_name}',
+                    ContentFile(image_data)
+                )
+            else:
+                form.add_error('selfie_image', 'Please provide a selfie image.')
+                return render(request, self.template_name, {
+                    'form': form,
+                    'verification': verification,
+                    'active_page': 'kyc',
+                })
+            
             verification.date_of_birth = d['date_of_birth']
             verification.address = d['address']
             verification.nationality = d['nationality']

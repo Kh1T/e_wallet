@@ -69,7 +69,7 @@ class KYCVerificationForm(forms.Form):
     nationality = forms.CharField(max_length=100, label='Nationality')
     national_id = forms.CharField(max_length=100, label='National ID Number')
     id_document = forms.FileField(label='ID Document (Passport / National ID)')
-    selfie_image = forms.FileField(label='Selfie Image')
+    selfie_image = forms.FileField(label='Selfie Image', required=False)
 
 
 class ChangePasswordForm(forms.Form):
