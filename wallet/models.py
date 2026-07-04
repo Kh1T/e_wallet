@@ -66,6 +66,7 @@ class IdentityVerification(models.Model):
     selfie_image = models.CharField(max_length=255, null=True, blank=True)
     verification_status = models.CharField(max_length=50, default='pending')
     verified_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(null=True, blank=True, help_text='Reason for rejection (shown to user)')
     created_at = models.DateTimeField(auto_now_add=True)
 
 class Security(models.Model):

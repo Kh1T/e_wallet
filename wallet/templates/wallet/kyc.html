@@ -24,8 +24,15 @@
         </div>
       </div>
       {% if verification.verification_status == 'rejected' %}
-      <div class="mt-6 rounded-3xl bg-red-50 border border-red-200 p-4 text-sm text-red-700">
-        Your submission was rejected. Please upload valid documents and try again.
+      <div class="mt-6 rounded-3xl bg-red-50 border border-red-200 p-4 text-sm">
+        <p class="font-semibold text-red-800 mb-2">Your submission was rejected</p>
+        {% if verification.rejection_reason %}
+        <div class="bg-white rounded-xl p-3 border border-red-100 mb-3">
+          <p class="text-xs text-red-500 uppercase tracking-wider mb-1">Reason</p>
+          <p class="text-red-700">{{ verification.rejection_reason }}</p>
+        </div>
+        {% endif %}
+        <p class="text-red-600">Please review the feedback above, update your documents, and try again.</p>
       </div>
       {% elif verification.verification_status == 'verified' %}
       <div class="mt-6 rounded-3xl bg-emerald-50 border border-emerald-200 p-4 text-sm text-emerald-700">
@@ -38,6 +45,21 @@
       {% endif %}
     </div>
 
+    {% if verification.verification_status == 'verified' %}
+    <!-- Verified State - No Form -->
+    <div class="lg:col-span-2 bg-emerald-50 rounded-3xl p-8 shadow-sm border border-emerald-200 flex flex-col items-center justify-center text-center">
+      <div class="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mb-4">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-10 h-10 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+          <polyline points="22 4 12 14.01 9 11.01"/>
+        </svg>
+      </div>
+      <h3 class="text-xl font-bold text-emerald-800 mb-2">KYC Verification Complete</h3>
+      <p class="text-emerald-600 max-w-md">Your identity has been verified successfully. You now have full access to all wallet features including sending money.</p>
+      <a href="{% url 'dashboard' %}" class="mt-6 inline-flex items-center justify-center rounded-2xl bg-emerald-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-500/20 hover:bg-emerald-700 transition">Go to Dashboard</a>
+    </div>
+    {% else %}
+    <!-- Form Section -->
     <div class="lg:col-span-2 bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
       <h3 class="text-lg font-bold text-slate-800 mb-4">Submit Your Documents</h3>
       <form method="post" enctype="multipart/form-data" class="space-y-6">
@@ -82,6 +104,7 @@
         <button type="submit" class="inline-flex items-center justify-center rounded-2xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/20 hover:bg-blue-700 transition">Submit Verification</button>
       </form>
     </div>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

@@ -233,13 +233,29 @@ class SendMoneyView(LoginRequiredMixin, View):
 
     def get(self, request):
         wallet = Wallet.objects.filter(user=request.user).first()
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        kyc_verified = verification and verification.verification_status == 'verified'
+
+        if not kyc_verified:
+            messages.warning(request, 'KYC verification is required to send money. Please complete your KYC verification.')
+
         return render(request, self.template_name, {
-            'form': SendMoneyForm(), 'wallet': wallet, 'active_page': 'send',
+            'form': SendMoneyForm(), 'wallet': wallet, 'kyc_verified': kyc_verified, 'active_page': 'send',
         })
 
     def post(self, request):
         wallet = Wallet.objects.filter(user=request.user).first()
         form   = SendMoneyForm(request.POST)
+
+        # Check KYC verification status
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        kyc_verified = verification and verification.verification_status == 'verified'
+
+        if not kyc_verified:
+            messages.error(request, 'KYC verification is required to send money. Please complete your KYC verification.')
+            return render(request, self.template_name, {
+                'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'active_page': 'send'
+            })
 
         if not wallet:
             messages.error(request, 'You do not have a wallet yet.')
@@ -251,15 +267,15 @@ class SendMoneyView(LoginRequiredMixin, View):
                 recipient = Wallet.objects.get(wallet_number=d['recipient_wallet'])
             except Wallet.DoesNotExist:
                 form.add_error('recipient_wallet', 'Wallet number not found.')
-                return render(request, self.template_name, {'form': form, 'wallet': wallet, 'active_page': 'send'})
+                return render(request, self.template_name, {'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'active_page': 'send'})
 
             if recipient.pk == wallet.pk:
                 form.add_error('recipient_wallet', 'You cannot transfer to your own wallet.')
-                return render(request, self.template_name, {'form': form, 'wallet': wallet, 'active_page': 'send'})
+                return render(request, self.template_name, {'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'active_page': 'send'})
 
             if wallet.balance < d['amount']:
                 form.add_error('amount', f'Insufficient balance. Available: {wallet.balance} {wallet.currency}')
-                return render(request, self.template_name, {'form': form, 'wallet': wallet, 'active_page': 'send'})
+                return render(request, self.template_name, {'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'active_page': 'send'})
 
             with db_transaction.atomic():
                 tx = Transaction.objects.create(
@@ -289,7 +305,7 @@ class SendMoneyView(LoginRequiredMixin, View):
             messages.success(request, f'Successfully sent {d["amount"]} {wallet.currency} to {recipient.wallet_number}!')
             return redirect('dashboard')
 
-        return render(request, self.template_name, {'form': form, 'wallet': wallet, 'active_page': 'send'})
+        return render(request, self.template_name, {'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'active_page': 'send'})
 
 
 class TopupView(LoginRequiredMixin, View):
@@ -489,46 +505,84 @@ class KYCReviewView(AdminRequiredMixin, View):
     template_name = 'wallet/kyc_review.html'
 
     def get(self, request):
-        pending = IdentityVerification.objects.order_by('-created_at')
+        submission_id = request.GET.get('submission')
+        status_filter = request.GET.get('status', 'all')
+
+        # Filter by status
+        queryset = IdentityVerification.objects.all()
+        if status_filter == 'pending':
+            queryset = queryset.filter(verification_status='pending')
+        elif status_filter == 'verified':
+            queryset = queryset.filter(verification_status='verified')
+        elif status_filter == 'rejected':
+            queryset = queryset.filter(verification_status='rejected')
+
+        submissions = queryset.order_by('-created_at')
+
+        # Get single submission for detail view
+        selected_submission = None
+        if submission_id:
+            try:
+                selected_submission = IdentityVerification.objects.get(id=submission_id)
+            except IdentityVerification.DoesNotExist:
+                pass
+
         return render(request, self.template_name, {
-            'pending_submissions': pending,
+            'submissions': submissions,
+            'selected_submission': selected_submission,
+            'status_filter': status_filter,
             'active_page': 'kyc_review',
         })
 
     def post(self, request):
         action = request.POST.get('action')
-        selected_ids = request.POST.getlist('selected')
-        submissions = IdentityVerification.objects.filter(id__in=selected_ids)
-        updated = 0
+        submission_id = request.POST.get('submission_id')
+        rejection_reason = request.POST.get('rejection_reason', '').strip()
 
-        for verification in submissions:
-            if action == 'approve':
-                if verification.verification_status != 'verified':
-                    verification.verification_status = 'verified'
-                    verification.verified_at = timezone.now()
-                    verification.save(update_fields=['verification_status', 'verified_at'])
-                    Notification.objects.create(
-                        user=verification.user,
-                        title='KYC Verified',
-                        message='Your identity verification has been approved.',
-                    )
-                    updated += 1
-            elif action == 'reject':
-                if verification.verification_status != 'rejected':
-                    verification.verification_status = 'rejected'
-                    verification.verified_at = None
-                    verification.save(update_fields=['verification_status', 'verified_at'])
-                    Notification.objects.create(
-                        user=verification.user,
-                        title='KYC Rejected',
-                        message='Your identity verification has been rejected. Please resubmit valid documents.',
-                    )
-                    updated += 1
+        if not submission_id:
+            messages.error(request, 'No submission selected.')
+            return redirect('kyc_review')
+
+        try:
+            verification = IdentityVerification.objects.get(id=submission_id)
+        except IdentityVerification.DoesNotExist:
+            messages.error(request, 'Submission not found.')
+            return redirect('kyc_review')
 
         if action == 'approve':
-            messages.success(request, f'{updated} submission(s) approved.')
+            if verification.verification_status != 'verified':
+                verification.verification_status = 'verified'
+                verification.verified_at = timezone.now()
+                verification.rejection_reason = None  # Clear any previous rejection reason
+                verification.save(update_fields=['verification_status', 'verified_at', 'rejection_reason'])
+                Notification.objects.create(
+                    user=verification.user,
+                    title='KYC Verified',
+                    message='Your identity verification has been approved. You can now send money and use all wallet features.',
+                )
+                messages.success(request, f'KYC for {verification.user.full_name} has been approved.')
+            else:
+                messages.info(request, 'This submission is already approved.')
+
         elif action == 'reject':
-            messages.success(request, f'{updated} submission(s) rejected.')
+            if not rejection_reason:
+                messages.error(request, 'Please provide a rejection reason.')
+                return redirect(f'{request.path}?submission={submission_id}')
+
+            if verification.verification_status != 'rejected':
+                verification.verification_status = 'rejected'
+                verification.verified_at = None
+                verification.rejection_reason = rejection_reason
+                verification.save(update_fields=['verification_status', 'verified_at', 'rejection_reason'])
+                Notification.objects.create(
+                    user=verification.user,
+                    title='KYC Rejected',
+                    message=f'Your identity verification has been rejected. Reason: {rejection_reason}',
+                )
+                messages.success(request, f'KYC for {verification.user.full_name} has been rejected.')
+            else:
+                messages.info(request, 'This submission is already rejected.')
+
         return redirect('kyc_review')
 
 
@@ -749,6 +803,17 @@ class TopupViewSet(viewsets.ModelViewSet):
 class TransferViewSet(viewsets.ModelViewSet):
     queryset = Transfer.objects.all()
     serializer_class = TransferSerializer
+    permission_classes = [IsAuthenticated]
+
+    def create(self, request, *args, **kwargs):
+        # Check if user has verified KYC
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        if not (verification and verification.verification_status == 'verified'):
+            return Response(
+                {'error': 'KYC verification is required to create transfers. Please complete your KYC verification.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        return super().create(request, *args, **kwargs)
 
 class FraudDetectionViewSet(viewsets.ModelViewSet):
     queryset = FraudDetection.objects.all()
