@@ -1,4 +1,5 @@
 from django import forms
+from django.core.exceptions import ValidationError
 from decimal import Decimal
 
 
@@ -70,6 +71,19 @@ class KYCVerificationForm(forms.Form):
     national_id = forms.CharField(max_length=100, label='National ID Number')
     id_document = forms.FileField(label='ID Document (Passport / National ID)')
     selfie_image = forms.FileField(label='Selfie Image', required=False)
+
+    def __init__(self, *args, user=None, **kwargs):
+        self.user = user
+        super().__init__(*args, **kwargs)
+
+    def clean_national_id(self):
+        national_id = self.cleaned_data.get('national_id')
+        if national_id:
+            from .models import IdentityVerification
+            existing = IdentityVerification.objects.filter(national_id=national_id).first()
+            if existing and (not self.user or existing.user != self.user):
+                raise ValidationError('This National ID is already registered with another account.')
+        return national_id
 
 
 class ChangePasswordForm(forms.Form):

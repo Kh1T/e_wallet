@@ -466,68 +466,71 @@ class KYCVerificationView(LoginRequiredMixin, View):
 
     def post(self, request):
         verification, _ = IdentityVerification.objects.get_or_create(user=request.user)
-        form = KYCVerificationForm(request.POST, request.FILES)
+        form = KYCVerificationForm(request.POST, request.FILES, user=request.user)
         if form.is_valid():
             d = form.cleaned_data
             request.user.full_name = d['full_name']
             request.user.save()
             id_document = d['id_document']
             
-            # Handle ID document
-            id_path = default_storage.save(
-                f'kyc/{request.user.id}/id_document_{uuid.uuid4().hex[:8]}.{id_document.name.split(".")[-1]}',
-                id_document
-            )
-            
-            # Handle selfie - either from file upload or camera capture
-            selfie_image = d.get('selfie_image')
-            selfie_image_data = request.POST.get('selfie_image_data')
-            
-            if selfie_image:
-                # File upload
-                selfie_path = default_storage.save(
-                    f'kyc/{request.user.id}/selfie_{uuid.uuid4().hex[:8]}.{selfie_image.name.split(".")[-1]}',
-                    selfie_image
+            try:
+                # Handle ID document
+                id_path = default_storage.save(
+                    f'kyc/{request.user.id}/id_document_{uuid.uuid4().hex[:8]}.{id_document.name.split(".")[-1]}',
+                    id_document
                 )
-            elif selfie_image_data:
-                # Camera capture - base64 data
-                import base64
-                from django.core.files.base import ContentFile
                 
-                # Remove the data URL prefix if present
-                if ';base64,' in selfie_image_data:
-                    format, imgstr = selfie_image_data.split(';base64,')
-                    ext = format.split('/')[-1] if '/' in format else 'jpg'
+                # Handle selfie - either from file upload or camera capture
+                selfie_image = d.get('selfie_image')
+                selfie_image_data = request.POST.get('selfie_image_data')
+                
+                if selfie_image:
+                    # File upload
+                    selfie_path = default_storage.save(
+                        f'kyc/{request.user.id}/selfie_{uuid.uuid4().hex[:8]}.{selfie_image.name.split(".")[-1]}',
+                        selfie_image
+                    )
+                elif selfie_image_data:
+                    # Camera capture - base64 data
+                    import base64
+                    from django.core.files.base import ContentFile
+                    
+                    # Remove the data URL prefix if present
+                    if ';base64,' in selfie_image_data:
+                        format, imgstr = selfie_image_data.split(';base64,')
+                        ext = format.split('/')[-1] if '/' in format else 'jpg'
+                    else:
+                        imgstr = selfie_image_data
+                        ext = 'jpg'
+                    
+                    # Decode base64 and save
+                    image_data = base64.b64decode(imgstr)
+                    file_name = f'selfie_{uuid.uuid4().hex[:8]}.{ext}'
+                    selfie_path = default_storage.save(
+                        f'kyc/{request.user.id}/{file_name}',
+                        ContentFile(image_data)
+                    )
                 else:
-                    imgstr = selfie_image_data
-                    ext = 'jpg'
+                    form.add_error('selfie_image', 'Please provide a selfie image.')
+                    return render(request, self.template_name, {
+                        'form': form,
+                        'verification': verification,
+                        'active_page': 'kyc',
+                    })
                 
-                # Decode base64 and save
-                image_data = base64.b64decode(imgstr)
-                file_name = f'selfie_{uuid.uuid4().hex[:8]}.{ext}'
-                selfie_path = default_storage.save(
-                    f'kyc/{request.user.id}/{file_name}',
-                    ContentFile(image_data)
-                )
-            else:
-                form.add_error('selfie_image', 'Please provide a selfie image.')
-                return render(request, self.template_name, {
-                    'form': form,
-                    'verification': verification,
-                    'active_page': 'kyc',
-                })
-            
-            verification.date_of_birth = d['date_of_birth']
-            verification.address = d['address']
-            verification.nationality = d['nationality']
-            verification.national_id = d['national_id']
-            verification.id_document = id_path
-            verification.selfie_image = selfie_path
-            verification.verification_status = 'pending'
-            verification.verified_at = None
-            verification.save()
-            messages.success(request, 'KYC documents submitted successfully. Verification is pending.')
-            return redirect('kyc')
+                verification.date_of_birth = d['date_of_birth']
+                verification.address = d['address']
+                verification.nationality = d['nationality']
+                verification.national_id = d['national_id']
+                verification.id_document = id_path
+                verification.selfie_image = selfie_path
+                verification.verification_status = 'pending'
+                verification.verified_at = None
+                verification.save()
+                messages.success(request, 'KYC documents submitted successfully. Verification is pending.')
+                return redirect('kyc')
+            except Exception:
+                form.add_error('national_id', 'This National ID is already registered with another account.')
 
         return render(request, self.template_name, {
             'form': form,
