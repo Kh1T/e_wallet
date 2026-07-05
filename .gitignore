@@ -33,7 +33,7 @@ PSQL/
 # Static files
 # (Uncomment the line below if you are collecting static files)
 # staticfiles/
-# static/ 
+# static/
 
 # Python packaging / build output
 build/
