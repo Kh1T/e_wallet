@@ -69,11 +69,6 @@
             Open Wallet Again
           </a>
           {% endif %}
-          {% if wallet.balance == 0 and wallet.status != 'closed' %}
-          <a href="{% url 'wallet_management' %}?action=delete&wallet_id={{ selected_wallet_id }}" class="block w-full px-4 py-3 rounded-xl text-left font-medium transition-all bg-slate-100 text-slate-700 hover:bg-slate-200" onclick="return confirm('Are you sure you want to delete this wallet? This action cannot be undone.');">
-            Delete Wallet
-          </a>
-          {% endif %}
         </form>
       </div>
     </div>
@@ -293,35 +288,6 @@
             </div>
             <button type="submit" class="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-6 py-3 text-sm font-semibold text-white hover:bg-emerald-700 transition" onclick="return confirm('Are you sure you want to reopen this wallet?');">
               Confirm - Reopen Wallet
-            </button>
-          </form>
-        </div>
-        {% endif %}
-
-        <!-- Delete Wallet -->
-        {% if action == 'delete' %}
-        <div>
-          <div class="flex items-center gap-3 mb-6">
-            <div class="w-12 h-12 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center">
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-              </svg>
-            </div>
-            <h3 class="text-2xl font-bold text-slate-800">Delete Wallet</h3>
-          </div>
-          <form method="post" class="space-y-5">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="delete">
-            <input type="hidden" name="wallet_id" value="{{ selected_wallet_id }}">
-            <div class="rounded-xl border border-slate-200 bg-slate-50 p-5">
-              <p class="text-slate-700 font-medium mb-3">Are you sure you want to delete this wallet?</p>
-              <ul class="text-sm text-slate-600 space-y-2 mb-4">
-                <li class="flex items-center gap-2"><span class="w-1.5 h-1.5 bg-slate-500 rounded-full"></span> This wallet must have a zero balance</li>
-                <li class="flex items-center gap-2"><span class="w-1.5 h-1.5 bg-slate-500 rounded-full"></span> This action cannot be undone</li>
-              </ul>
-            </div>
-            <button type="submit" class="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-slate-700 px-6 py-3 text-sm font-semibold text-white hover:bg-slate-800 transition" onclick="return confirm('This action cannot be undone. Are you sure you want to delete this wallet?');">
-              Confirm - Delete Wallet
             </button>
           </form>
         </div>

@@ -382,14 +382,6 @@ class WalletManagementView(LoginRequiredMixin, View):
                 messages.info(request, f'Wallet is currently {wallet.status}.')
             return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
 
-        elif action == 'delete':
-            if wallet.balance != Decimal('0.00'):
-                messages.error(request, 'Wallet cannot be deleted while it still has a balance. Please transfer or withdraw the balance first.')
-            else:
-                wallet.delete()
-                messages.success(request, 'Wallet has been deleted successfully.')
-                return redirect('wallet_management')
-            return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
 
         return redirect('wallet_management')
 
