@@ -1,0 +1,305 @@
+{% extends 'wallet/base.html' %}
+{% block title %}KYC Verification — NexusPay{% endblock %}
+{% block page_title %}KYC Verification{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-8">
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+      <h3 class="text-lg font-bold text-slate-800 mb-4">Verification Status</h3>
+      <div class="space-y-3 text-sm text-slate-600">
+        <div class="rounded-2xl p-4 bg-slate-50 border border-slate-200">
+          <p class="font-semibold text-slate-700">Status</p>
+          <p class="mt-2 text-xl font-semibold text-blue-600">{{ verification.verification_status|capfirst }}</p>
+        </div>
+        <div class="rounded-2xl p-4 bg-slate-50 border border-slate-200">
+          <p class="font-semibold text-slate-700">Submitted</p>
+          <p class="mt-2 text-slate-500">
+            {% if verification.created_at %}{{ verification.created_at|date:'M d, Y H:i' }}{% else %}-{% endif %}
+          </p>
+        </div>
+        <div class="rounded-2xl p-4 bg-slate-50 border border-slate-200">
+          <p class="font-semibold text-slate-700">Verified At</p>
+          <p class="mt-2 text-slate-500">{% if verification.verified_at %}{{ verification.verified_at|date:'M d, Y H:i' }}{% else %}Not yet verified{% endif %}</p>
+        </div>
+      </div>
+      {% if verification.verification_status == 'rejected' %}
+      <div class="mt-6 rounded-3xl bg-red-50 border border-red-200 p-4 text-sm">
+        <p class="font-semibold text-red-800 mb-2">Your submission was rejected</p>
+        {% if verification.rejection_reason %}
+        <div class="bg-white rounded-xl p-3 border border-red-100 mb-3">
+          <p class="text-xs text-red-500 uppercase tracking-wider mb-1">Reason</p>
+          <p class="text-red-700">{{ verification.rejection_reason }}</p>
+        </div>
+        {% endif %}
+        <p class="text-red-600">Please review the feedback above, update your documents, and try again.</p>
+      </div>
+      {% elif verification.verification_status == 'verified' %}
+      <div class="mt-6 rounded-3xl bg-emerald-50 border border-emerald-200 p-4 text-sm text-emerald-700">
+        Your KYC has been verified. You can continue using all services.
+      </div>
+      {% else %}
+      <div class="mt-6 rounded-3xl bg-blue-50 border border-blue-200 p-4 text-sm text-blue-700">
+        Your KYC verification is pending review. This may take a few moments.
+      </div>
+      {% endif %}
+    </div>
+
+    {% if verification.verification_status == 'verified' %}
+    <!-- Verified State - No Form -->
+    <div class="lg:col-span-2 bg-emerald-50 rounded-3xl p-8 shadow-sm border border-emerald-200 flex flex-col items-center justify-center text-center">
+      <div class="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mb-4">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-10 h-10 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+          <polyline points="22 4 12 14.01 9 11.01"/>
+        </svg>
+      </div>
+      <h3 class="text-xl font-bold text-emerald-800 mb-2">KYC Verification Complete</h3>
+      <p class="text-emerald-600 max-w-md">Your identity has been verified successfully. You now have full access to all wallet features including sending money.</p>
+      <a href="{% url 'dashboard' %}" class="mt-6 inline-flex items-center justify-center rounded-2xl bg-emerald-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-500/20 hover:bg-emerald-700 transition">Go to Dashboard</a>
+    </div>
+    {% else %}
+    <!-- Form Section -->
+    <div class="lg:col-span-2 bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+      <h3 class="text-lg font-bold text-slate-800 mb-4">Submit Your Documents</h3>
+      <form method="post" enctype="multipart/form-data" class="space-y-6">
+        {% csrf_token %}
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div>
+            <label class="block text-sm font-semibold text-slate-700 mb-2">Full Name</label>
+            <input type="text" name="full_name" value="{{ form.full_name.value|default:'' }}" class="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" />
+            {% if form.full_name.errors %}<p class="text-red-500 text-xs mt-1">{{ form.full_name.errors.0 }}</p>{% endif %}
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-slate-700 mb-2">Date of Birth</label>
+            <input type="date" name="date_of_birth" value="{{ form.date_of_birth.value|default:'' }}" class="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" />
+            {% if form.date_of_birth.errors %}<p class="text-red-500 text-xs mt-1">{{ form.date_of_birth.errors.0 }}</p>{% endif %}
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-sm font-semibold text-slate-700 mb-2">Address</label>
+            <textarea name="address" rows="3" class="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500">{{ form.address.value|default:'' }}</textarea>
+            {% if form.address.errors %}<p class="text-red-500 text-xs mt-1">{{ form.address.errors.0 }}</p>{% endif %}
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-slate-700 mb-2">Nationality</label>
+            <input type="text" name="nationality" value="{{ form.nationality.value|default:'' }}" class="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" />
+            {% if form.nationality.errors %}<p class="text-red-500 text-xs mt-1">{{ form.nationality.errors.0 }}</p>{% endif %}
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-slate-700 mb-2">National ID Number</label>
+            <input type="text" name="national_id" value="{{ form.national_id.value|default:'' }}" class="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" />
+            {% if form.national_id.errors %}<p class="text-red-500 text-xs mt-1">{{ form.national_id.errors.0 }}</p>{% endif %}
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-sm font-semibold text-slate-700 mb-2">ID Document</label>
+            <input type="file" name="id_document" class="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" />
+            {% if form.id_document.errors %}<p class="text-red-500 text-xs mt-1">{{ form.id_document.errors.0 }}</p>{% endif %}
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-sm font-semibold text-slate-700 mb-2">Selfie Image</label>
+            
+            <!-- Selfie Input Options -->
+            <div class="bg-slate-50 rounded-2xl p-4 border border-slate-200">
+              <!-- Tabs -->
+              <div class="flex gap-2 mb-4">
+                <button type="button" id="tab-camera" class="flex-1 py-2 px-4 rounded-xl text-sm font-semibold bg-blue-600 text-white transition-all" onclick="switchSelfieMode('camera')">
+                  <span class="flex items-center justify-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                    Take Photo
+                  </span>
+                </button>
+                <button type="button" id="tab-upload" class="flex-1 py-2 px-4 rounded-xl text-sm font-semibold bg-slate-200 text-slate-600 hover:bg-slate-300 transition-all" onclick="switchSelfieMode('upload')">
+                  <span class="flex items-center justify-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Upload File
+                  </span>
+                </button>
+              </div>
+
+              <!-- Camera Mode -->
+              <div id="camera-mode" class="space-y-4">
+                <div class="relative bg-black rounded-xl overflow-hidden" style="min-height: 300px;">
+                  <video id="camera-video" class="w-full h-auto max-h-[400px]" autoplay playsinline></video>
+                  <canvas id="camera-canvas" class="hidden"></canvas>
+                  <div id="camera-placeholder" class="absolute inset-0 flex flex-col items-center justify-center text-white">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-16 h-16 mb-2 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                    <p class="text-sm opacity-75">Camera preview will appear here</p>
+                  </div>
+                  <img id="captured-photo" class="hidden w-full h-auto max-h-[400px]" alt="Captured selfie">
+                </div>
+                
+                <div class="flex gap-3">
+                  <button type="button" id="btn-start-camera" onclick="startCamera()" class="flex-1 py-2 px-4 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-all">
+                    Start Camera
+                  </button>
+                  <button type="button" id="btn-capture" onclick="capturePhoto()" class="hidden flex-1 py-2 px-4 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-700 transition-all">
+                    Capture Photo
+                  </button>
+                  <button type="button" id="btn-retake" onclick="retakePhoto()" class="hidden flex-1 py-2 px-4 bg-slate-600 text-white rounded-xl text-sm font-semibold hover:bg-slate-700 transition-all">
+                    Retake
+                  </button>
+                </div>
+                
+                <p class="text-xs text-slate-500 text-center">
+                  Make sure your face is clearly visible and well-lit
+                </p>
+              </div>
+
+              <!-- Upload Mode -->
+              <div id="upload-mode" class="hidden">
+                <input type="file" name="selfie_image" id="selfie-file-input" accept="image/*" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" onchange="previewUpload(this)" />
+                <div id="upload-preview" class="mt-4 hidden">
+                  <img id="upload-preview-img" class="w-full max-h-[300px] object-contain rounded-xl" alt="Preview">
+                </div>
+              </div>
+
+              <!-- Hidden input to store the final image -->
+              <input type="hidden" name="selfie_image_data" id="selfie-image-data">
+            </div>
+            
+            {% if form.selfie_image.errors %}<p class="text-red-500 text-xs mt-1">{{ form.selfie_image.errors.0 }}</p>{% endif %}
+          </div>
+        </div>
+        <button type="submit" class="inline-flex items-center justify-center rounded-2xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/20 hover:bg-blue-700 transition">Submit Verification</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  // Selfie capture functionality
+  let stream = null;
+  let currentMode = 'camera';
+
+  function switchSelfieMode(mode) {
+    currentMode = mode;
+    const cameraTab = document.getElementById('tab-camera');
+    const uploadTab = document.getElementById('tab-upload');
+    const cameraMode = document.getElementById('camera-mode');
+    const uploadMode = document.getElementById('upload-mode');
+
+    if (mode === 'camera') {
+      cameraTab.className = 'flex-1 py-2 px-4 rounded-xl text-sm font-semibold bg-blue-600 text-white transition-all';
+      uploadTab.className = 'flex-1 py-2 px-4 rounded-xl text-sm font-semibold bg-slate-200 text-slate-600 hover:bg-slate-300 transition-all';
+      cameraMode.classList.remove('hidden');
+      uploadMode.classList.add('hidden');
+      document.getElementById('selfie-file-input').value = '';
+      document.getElementById('upload-preview').classList.add('hidden');
+    } else {
+      uploadTab.className = 'flex-1 py-2 px-4 rounded-xl text-sm font-semibold bg-blue-600 text-white transition-all';
+      cameraTab.className = 'flex-1 py-2 px-4 rounded-xl text-sm font-semibold bg-slate-200 text-slate-600 hover:bg-slate-300 transition-all';
+      uploadMode.classList.remove('hidden');
+      cameraMode.classList.add('hidden');
+      stopCamera();
+    }
+  }
+
+  async function startCamera() {
+    try {
+      const video = document.getElementById('camera-video');
+      const placeholder = document.getElementById('camera-placeholder');
+
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'user',
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      });
+
+      video.srcObject = stream;
+      placeholder.classList.add('hidden');
+      video.classList.remove('hidden');
+
+      document.getElementById('btn-start-camera').classList.add('hidden');
+      document.getElementById('btn-capture').classList.remove('hidden');
+    } catch (err) {
+      alert('Could not access camera. Please make sure you have granted camera permissions or use the upload option instead.');
+      console.error('Camera error:', err);
+    }
+  }
+
+  function stopCamera() {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      stream = null;
+    }
+    const video = document.getElementById('camera-video');
+    video.srcObject = null;
+    video.classList.add('hidden');
+    document.getElementById('camera-placeholder').classList.remove('hidden');
+    document.getElementById('btn-start-camera').classList.remove('hidden');
+    document.getElementById('btn-capture').classList.add('hidden');
+    document.getElementById('btn-retake').classList.add('hidden');
+    document.getElementById('captured-photo').classList.add('hidden');
+  }
+
+  function capturePhoto() {
+    const video = document.getElementById('camera-video');
+    const canvas = document.getElementById('camera-canvas');
+    const photo = document.getElementById('captured-photo');
+    const hiddenInput = document.getElementById('selfie-image-data');
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+
+    const imageData = canvas.toDataURL('image/jpeg', 0.9);
+    photo.src = imageData;
+    hiddenInput.value = imageData;
+
+    video.classList.add('hidden');
+    photo.classList.remove('hidden');
+
+    document.getElementById('btn-capture').classList.add('hidden');
+    document.getElementById('btn-retake').classList.remove('hidden');
+
+    // Stop the stream after capture
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      stream = null;
+    }
+  }
+
+  function retakePhoto() {
+    const video = document.getElementById('camera-video');
+    const photo = document.getElementById('captured-photo');
+    const hiddenInput = document.getElementById('selfie-image-data');
+
+    photo.classList.add('hidden');
+    video.classList.remove('hidden');
+    hiddenInput.value = '';
+
+    document.getElementById('btn-retake').classList.add('hidden');
+    document.getElementById('btn-capture').classList.remove('hidden');
+
+    // Restart camera
+    startCamera();
+  }
+
+  function previewUpload(input) {
+    if (input.files && input.files[0]) {
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        document.getElementById('upload-preview-img').src = e.target.result;
+        document.getElementById('upload-preview').classList.remove('hidden');
+      };
+      reader.readAsDataURL(input.files[0]);
+    }
+  }
+
+  // Form submission handling - no longer needed since we use base64 data directly
+  // The server will handle both file upload and camera capture (base64) data
+
+  // Clean up camera on page unload
+  window.addEventListener('beforeunload', function() {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+    }
+  });
+</script>
+{% endblock %}

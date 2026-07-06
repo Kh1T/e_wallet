@@ -1,0 +1,198 @@
+{% extends 'wallet/base.html' %}
+{% block title %}KYC Admin Review — NexusPay{% endblock %}
+{% block page_title %}KYC Admin Review{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto">
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h2 class="text-2xl font-bold text-slate-900">KYC Submissions</h2>
+      <p class="text-slate-500 mt-1">Review and approve user identity verifications.</p>
+    </div>
+    <div class="flex gap-2">
+      <a href="?status=all" class="px-4 py-2 rounded-xl text-sm font-semibold {% if status_filter == 'all' %}bg-blue-600 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">All</a>
+      <a href="?status=pending" class="px-4 py-2 rounded-xl text-sm font-semibold {% if status_filter == 'pending' %}bg-amber-500 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">Pending</a>
+      <a href="?status=verified" class="px-4 py-2 rounded-xl text-sm font-semibold {% if status_filter == 'verified' %}bg-emerald-600 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">Approved</a>
+      <a href="?status=rejected" class="px-4 py-2 rounded-xl text-sm font-semibold {% if status_filter == 'rejected' %}bg-red-600 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">Rejected</a>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Submissions List -->
+    <div class="lg:col-span-1">
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-4 py-3 bg-slate-50 border-b border-slate-200">
+          <h3 class="font-semibold text-slate-700">Submissions</h3>
+        </div>
+        <div class="max-h-[600px] overflow-y-auto">
+          {% for submission in submissions %}
+          <a href="?status={{ status_filter }}&submission={{ submission.id }}"
+             class="block px-4 py-3 border-b border-slate-100 hover:bg-slate-50 transition {% if selected_submission and selected_submission.id == submission.id %}bg-blue-50 border-l-4 border-l-blue-600{% endif %}">
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="font-semibold text-slate-800 text-sm">{{ submission.user.full_name }}</p>
+                <p class="text-xs text-slate-500">{{ submission.user.email }}</p>
+              </div>
+              <span class="inline-flex rounded-full px-2 py-0.5 text-xs font-semibold {% if submission.verification_status == 'verified' %}bg-emerald-100 text-emerald-700{% elif submission.verification_status == 'rejected' %}bg-red-100 text-red-700{% else %}bg-amber-100 text-amber-700{% endif %}">
+                {{ submission.verification_status|capfirst }}
+              </span>
+            </div>
+            <p class="text-xs text-slate-400 mt-1">{{ submission.created_at|date:'M d, Y H:i' }}</p>
+          </a>
+          {% empty %}
+          <div class="px-4 py-8 text-center text-slate-400">
+            <p>No submissions found.</p>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Detail View -->
+    <div class="lg:col-span-2">
+      {% if selected_submission %}
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm">
+        <!-- Header -->
+        <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+          <div>
+            <h3 class="text-lg font-bold text-slate-800">Submission Details</h3>
+            <p class="text-sm text-slate-500">Review ID: {{ selected_submission.id }}</p>
+          </div>
+          <span class="inline-flex rounded-full px-3 py-1 text-sm font-semibold {% if selected_submission.verification_status == 'verified' %}bg-emerald-100 text-emerald-700{% elif selected_submission.verification_status == 'rejected' %}bg-red-100 text-red-700{% else %}bg-amber-100 text-amber-700{% endif %}">
+            {{ selected_submission.verification_status|capfirst }}
+          </span>
+        </div>
+
+        <div class="p-6 space-y-6">
+          <!-- User Info -->
+          <div class="grid grid-cols-2 gap-4">
+            <div class="bg-slate-50 rounded-xl p-4">
+              <p class="text-xs text-slate-500 uppercase tracking-wider">Full Name</p>
+              <p class="font-semibold text-slate-800">{{ selected_submission.user.full_name }}</p>
+            </div>
+            <div class="bg-slate-50 rounded-xl p-4">
+              <p class="text-xs text-slate-500 uppercase tracking-wider">Email</p>
+              <p class="font-semibold text-slate-800">{{ selected_submission.user.email }}</p>
+            </div>
+            <div class="bg-slate-50 rounded-xl p-4">
+              <p class="text-xs text-slate-500 uppercase tracking-wider">National ID</p>
+              <p class="font-semibold text-slate-800">{{ selected_submission.national_id|default:'—' }}</p>
+            </div>
+            <div class="bg-slate-50 rounded-xl p-4">
+              <p class="text-xs text-slate-500 uppercase tracking-wider">Date of Birth</p>
+              <p class="font-semibold text-slate-800">{{ selected_submission.date_of_birth|default:'—' }}</p>
+            </div>
+            <div class="bg-slate-50 rounded-xl p-4">
+              <p class="text-xs text-slate-500 uppercase tracking-wider">Nationality</p>
+              <p class="font-semibold text-slate-800">{{ selected_submission.nationality|default:'—' }}</p>
+            </div>
+            <div class="bg-slate-50 rounded-xl p-4">
+              <p class="text-xs text-slate-500 uppercase tracking-wider">Submitted</p>
+              <p class="font-semibold text-slate-800">{{ selected_submission.created_at|date:'M d, Y H:i' }}</p>
+            </div>
+          </div>
+
+          <!-- Address -->
+          <div class="bg-slate-50 rounded-xl p-4">
+            <p class="text-xs text-slate-500 uppercase tracking-wider">Address</p>
+            <p class="font-semibold text-slate-800">{{ selected_submission.address|default:'—'|linebreaks }}</p>
+          </div>
+
+          <!-- Documents -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <p class="text-xs text-slate-500 uppercase tracking-wider mb-2">ID Document</p>
+              {% if selected_submission.id_document %}
+              <div class="bg-slate-100 rounded-xl p-2">
+                <img src="/media/{{ selected_submission.id_document }}" alt="ID Document" class="w-full h-48 object-contain rounded-lg">
+                <a href="/media/{{ selected_submission.id_document }}" target="_blank" class="block text-center text-sm text-blue-600 hover:underline mt-2">View Full Size</a>
+              </div>
+              {% else %}
+              <div class="bg-slate-100 rounded-xl p-8 text-center text-slate-400">
+                <p>No ID document uploaded</p>
+              </div>
+              {% endif %}
+            </div>
+            <div>
+              <p class="text-xs text-slate-500 uppercase tracking-wider mb-2">Selfie Image</p>
+              {% if selected_submission.selfie_image %}
+              <div class="bg-slate-100 rounded-xl p-2">
+                <img src="/media/{{ selected_submission.selfie_image }}" alt="Selfie" class="w-full h-48 object-contain rounded-lg">
+                <a href="/media/{{ selected_submission.selfie_image }}" target="_blank" class="block text-center text-sm text-blue-600 hover:underline mt-2">View Full Size</a>
+              </div>
+              {% else %}
+              <div class="bg-slate-100 rounded-xl p-8 text-center text-slate-400">
+                <p>No selfie uploaded</p>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+
+          <!-- Rejection Reason (if rejected) -->
+          {% if selected_submission.rejection_reason %}
+          <div class="bg-red-50 border border-red-200 rounded-xl p-4">
+            <p class="text-xs text-red-500 uppercase tracking-wider">Rejection Reason</p>
+            <p class="text-red-700 font-medium mt-1">{{ selected_submission.rejection_reason }}</p>
+          </div>
+          {% endif %}
+
+          <!-- Action Buttons -->
+          {% if selected_submission.verification_status != 'verified' %}
+          <form method="post" class="space-y-4">
+            {% csrf_token %}
+            <input type="hidden" name="submission_id" value="{{ selected_submission.id }}">
+
+            {% if selected_submission.verification_status != 'rejected' %}
+            <div>
+              <label class="block text-sm font-semibold text-slate-700 mb-2">Rejection Reason (required if rejecting)</label>
+              <textarea name="rejection_reason" rows="3" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-red-500 focus:ring-red-500" placeholder="Enter reason for rejection... This will be shown to the user.">{{ selected_submission.rejection_reason|default:'' }}</textarea>
+            </div>
+            {% endif %}
+
+            <div class="flex flex-wrap gap-3">
+              {% if selected_submission.verification_status != 'rejected' %}
+              <button type="submit" name="action" value="approve" class="rounded-xl bg-emerald-600 px-6 py-3 text-sm font-semibold text-white hover:bg-emerald-700 transition shadow-lg shadow-emerald-500/20">
+                Approve KYC
+              </button>
+              {% endif %}
+              {% if selected_submission.verification_status != 'rejected' %}
+              <button type="submit" name="action" value="reject" class="rounded-xl bg-red-600 px-6 py-3 text-sm font-semibold text-white hover:bg-red-700 transition shadow-lg shadow-red-500/20">
+                Reject KYC
+              </button>
+              {% endif %}
+            </div>
+          </form>
+          {% else %}
+          <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              </div>
+              <div>
+                <p class="font-semibold text-emerald-800">Verified</p>
+                <p class="text-sm text-emerald-600">Approved on {{ selected_submission.verified_at|date:'M d, Y H:i' }}</p>
+              </div>
+            </div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% else %}
+      <!-- Empty State -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 text-center">
+        <div class="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+          </svg>
+        </div>
+        <h3 class="text-lg font-semibold text-slate-700">Select a Submission</h3>
+        <p class="text-slate-500 mt-1">Click on a submission from the list to view details and take action.</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

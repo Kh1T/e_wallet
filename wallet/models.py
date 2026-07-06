@@ -59,10 +59,14 @@ class Notification(models.Model):
 class IdentityVerification(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     national_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    date_of_birth = models.DateField(null=True, blank=True)
+    address = models.TextField(null=True, blank=True)
+    nationality = models.CharField(max_length=100, null=True, blank=True)
     id_document = models.CharField(max_length=255, null=True, blank=True)
     selfie_image = models.CharField(max_length=255, null=True, blank=True)
     verification_status = models.CharField(max_length=50, default='pending')
     verified_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(null=True, blank=True, help_text='Reason for rejection (shown to user)')
     created_at = models.DateTimeField(auto_now_add=True)
 
 class Security(models.Model):

@@ -59,6 +59,19 @@ class ProfileUpdateForm(forms.Form):
     phone     = forms.CharField(max_length=50)
 
 
+class KYCVerificationForm(forms.Form):
+    full_name = forms.CharField(max_length=255, label='Full Name')
+    date_of_birth = forms.DateField(
+        widget=forms.DateInput(attrs={'type': 'date'}),
+        label='Date of Birth'
+    )
+    address = forms.CharField(widget=forms.Textarea(attrs={'rows': 3}), label='Address')
+    nationality = forms.CharField(max_length=100, label='Nationality')
+    national_id = forms.CharField(max_length=100, label='National ID Number')
+    id_document = forms.FileField(label='ID Document (Passport / National ID)')
+    selfie_image = forms.FileField(label='Selfie Image', required=False)
+
+
 class ChangePasswordForm(forms.Form):
     old_password  = forms.CharField(widget=forms.PasswordInput, label='Current Password')
     new_password  = forms.CharField(widget=forms.PasswordInput, label='New Password')
