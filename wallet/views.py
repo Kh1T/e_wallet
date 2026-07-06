@@ -1014,6 +1014,228 @@ class TransferViewSet(viewsets.ModelViewSet):
             )
         return super().create(request, *args, **kwargs)
 
+
+class PeerToPeerTransferView(APIView):
+    """
+    POST /api/transfers/p2p/
+    Transfer money from authenticated user's wallet to another wallet.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        sender_wallet_id = request.data.get('sender_wallet_id')
+        recipient_wallet_number = request.data.get('recipient_wallet_number')
+        amount = request.data.get('amount')
+        description = request.data.get('description', '')
+
+        # Validate KYC
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        if not (verification and verification.verification_status == 'verified'):
+            return Response(
+                {'error': 'KYC verification required.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Get sender wallet
+        try:
+            sender_wallet = Wallet.objects.get(id=sender_wallet_id, user=request.user)
+        except Wallet.DoesNotExist:
+            return Response({'error': 'Sender wallet not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check wallet status
+        if sender_wallet.status != 'active':
+            return Response({'error': 'Sender wallet is not active.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get recipient wallet
+        try:
+            recipient_wallet = Wallet.objects.get(wallet_number=recipient_wallet_number)
+        except Wallet.DoesNotExist:
+            return Response({'error': 'Recipient wallet not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check recipient wallet status
+        if recipient_wallet.status != 'active':
+            return Response({'error': 'Recipient wallet is not active.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Prevent self-transfer
+        if sender_wallet.id == recipient_wallet.id:
+            return Response({'error': 'Cannot transfer to same wallet.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate amount
+        try:
+            amount = Decimal(str(amount))
+            if amount <= 0:
+                raise ValueError
+        except (ValueError, TypeError):
+            return Response({'error': 'Invalid amount.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check balance
+        if sender_wallet.balance < amount:
+            return Response(
+                {'error': f'Insufficient balance. Available: {sender_wallet.balance} {sender_wallet.currency}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check currency match
+        if sender_wallet.currency != recipient_wallet.currency:
+            return Response(
+                {'error': f'Currency mismatch. Sender: {sender_wallet.currency}, Recipient: {recipient_wallet.currency}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check transaction limits
+        today = timezone.now().date()
+        daily_total = Transaction.objects.filter(
+            wallet=sender_wallet,
+            transaction_type='transfer',
+            created_at__date=today
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        limit, _ = TransactionLimit.objects.get_or_create(user=request.user)
+        if limit.daily_limit > 0 and daily_total + amount > limit.daily_limit:
+            return Response(
+                {'error': f'Daily transfer limit exceeded. Limit: {limit.daily_limit}, Already sent: {daily_total}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Monthly limit check
+        month_start = today.replace(day=1)
+        monthly_total = Transaction.objects.filter(
+            wallet=sender_wallet,
+            transaction_type='transfer',
+            created_at__date__gte=month_start
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        if limit.monthly_limit > 0 and monthly_total + amount > limit.monthly_limit:
+            return Response(
+                {'error': f'Monthly transfer limit exceeded. Limit: {limit.monthly_limit}, Already sent: {monthly_total}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Execute transfer atomically
+        with db_transaction.atomic():
+            transaction = Transaction.objects.create(
+                wallet=sender_wallet,
+                transaction_type='transfer',
+                amount=amount,
+                status='completed',
+                description=description,
+                reference=f'TRF-{uuid.uuid4().hex[:8].upper()}',
+            )
+            transfer = Transfer.objects.create(
+                transaction=transaction,
+                sender_wallet=sender_wallet,
+                receiver_wallet=recipient_wallet,
+            )
+            sender_wallet.balance -= amount
+            recipient_wallet.balance += amount
+            sender_wallet.save()
+            recipient_wallet.save()
+
+            # Create audit log
+            AuditLog.objects.create(
+                user=request.user,
+                action=f'Transfer {amount} {sender_wallet.currency} to {recipient_wallet.wallet_number}',
+                ip_address=request.META.get('REMOTE_ADDR'),
+            )
+
+            # Create notifications
+            Notification.objects.create(
+                user=recipient_wallet.user,
+                transaction=transaction,
+                title='Money Received',
+                message=f'You received {amount} {sender_wallet.currency} from {request.user.full_name}.',
+            )
+            Notification.objects.create(
+                user=request.user,
+                transaction=transaction,
+                title='Money Sent',
+                message=f'You sent {amount} {sender_wallet.currency} to {recipient_wallet.user.full_name}.',
+            )
+
+        return Response({
+            'message': 'Transfer successful.',
+            'transfer': {
+                'id': transfer.id,
+                'reference': transaction.reference,
+                'amount': str(amount),
+                'currency': sender_wallet.currency,
+                'sender_wallet': sender_wallet.wallet_number,
+                'recipient_wallet': recipient_wallet.wallet_number,
+                'recipient_name': recipient_wallet.user.full_name,
+                'created_at': transfer.created_at,
+            }
+        }, status=status.HTTP_201_CREATED)
+
+
+class TransferHistoryView(APIView):
+    """
+    GET /api/transfers/history/
+    Get transfer history for authenticated user.
+    Query params:
+      - type: 'sent', 'received', or 'all' (default: 'all')
+      - limit: number of results to return (default: 50)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        transfer_type = request.query_params.get('type', 'all')
+        limit = int(request.query_params.get('limit', 50))
+
+        wallet_ids = Wallet.objects.filter(user=request.user).values_list('id', flat=True)
+
+        history = []
+
+        if transfer_type in ['sent', 'all']:
+            sent = Transfer.objects.filter(
+                sender_wallet__in=wallet_ids
+            ).select_related('transaction', 'receiver_wallet__user', 'sender_wallet').order_by('-created_at')[:limit]
+
+            for t in sent:
+                history.append({
+                    'type': 'sent',
+                    'amount': str(t.transaction.amount),
+                    'currency': t.sender_wallet.currency,
+                    'to_wallet_number': t.receiver_wallet.wallet_number,
+                    'to_user_name': t.receiver_wallet.user.full_name,
+                    'from_wallet_number': t.sender_wallet.wallet_number,
+                    'from_user_name': request.user.full_name,
+                    'date': t.created_at.isoformat(),
+                    'reference': t.transaction.reference,
+                    'description': t.transaction.description,
+                    'status': t.transaction.status,
+                })
+
+        if transfer_type in ['received', 'all']:
+            received = Transfer.objects.filter(
+                receiver_wallet__in=wallet_ids
+            ).select_related('transaction', 'sender_wallet__user', 'receiver_wallet').order_by('-created_at')[:limit]
+
+            for t in received:
+                history.append({
+                    'type': 'received',
+                    'amount': str(t.transaction.amount),
+                    'currency': t.receiver_wallet.currency,
+                    'from_wallet_number': t.sender_wallet.wallet_number,
+                    'from_user_name': t.sender_wallet.user.full_name,
+                    'to_wallet_number': t.receiver_wallet.wallet_number,
+                    'to_user_name': request.user.full_name,
+                    'date': t.created_at.isoformat(),
+                    'reference': t.transaction.reference,
+                    'description': t.transaction.description,
+                    'status': t.transaction.status,
+                })
+
+        # Sort by date descending
+        history.sort(key=lambda x: x['date'], reverse=True)
+
+        # Apply limit after combining
+        history = history[:limit]
+
+        return Response({
+            'count': len(history),
+            'transfers': history
+        })
+
+
 class FraudDetectionViewSet(viewsets.ModelViewSet):
     queryset = FraudDetection.objects.all()
     serializer_class = FraudDetectionSerializer
