@@ -7,6 +7,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from django.conf import settings
 from django.contrib.auth import authenticate, login as auth_login, logout as auth_logout
 from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
@@ -59,6 +60,7 @@ from .serializers import (
 from .forms import (
     LoginForm, RegisterForm, SendMoneyForm, TopupForm,
     ProfileUpdateForm, ChangePasswordForm, KYCVerificationForm,
+    WalletManagementForm, UpdateWalletForm,
 )
 
 
@@ -125,14 +127,9 @@ class RegisterPageView(View):
                 )
                 user.set_password(d['password'])
                 user.save()
-                Wallet.objects.create(
-                    user=user,
-                    wallet_number=f'WAL-{uuid.uuid4().hex[:10].upper()}',
-                    currency='KHR',
-                )
                 auth_login(request, user)
-                messages.success(request, f'Welcome, {user.full_name}! Your wallet has been created.')
-                return redirect('dashboard')
+                messages.success(request, f'Welcome, {user.full_name}! Please create your new E-wallet to continue.')
+                return redirect('create_wallet')
         return render(request, self.template_name, {'form': form})
 
 
@@ -224,6 +221,177 @@ class TransactionListView(LoginRequiredMixin, View):
             'active_page':          'transactions',
         }
         return render(request, 'wallet/transactions.html', ctx)
+
+
+class CreateWalletView(LoginRequiredMixin, View):
+    """GET/POST /create-wallet/ — Create a wallet for the authenticated user."""
+    login_url = '/login/'
+    template_name = 'wallet/create_wallet.html'
+
+    def get(self, request):
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        is_kyc_verified = bool(verification and verification.verification_status == 'verified')
+
+        existing_wallets = Wallet.objects.filter(user=request.user).order_by('created_at')
+        wallet = existing_wallets.first()
+        if not is_kyc_verified:
+            messages.warning(request, 'KYC verification is required before creating a wallet. Please complete your KYC first.')
+            return redirect('kyc')
+
+        if existing_wallets.count() >= 5:
+            messages.info(request, 'Wallet creation limit reached. You can create up to 5 wallets.')
+            return render(request, self.template_name, {
+                'active_page': 'create_wallet',
+                'existing_wallets': existing_wallets,
+                'can_create_separate': False,
+            })
+        if wallet and existing_wallets.count() >= 1:
+            return render(request, self.template_name, {
+                'active_page': 'create_wallet',
+                'existing_wallets': existing_wallets,
+                'can_create_separate': True,
+            })
+        return render(request, self.template_name, {'active_page': 'create_wallet', 'existing_wallets': existing_wallets})
+
+    def post(self, request):
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        is_kyc_verified = bool(verification and verification.verification_status == 'verified')
+        if not is_kyc_verified:
+            messages.error(request, 'KYC verification is required before creating a wallet. Please complete your KYC first.')
+            return redirect('kyc')
+
+        wallet_type = request.POST.get('wallet_type', 'primary')
+        existing_wallets = Wallet.objects.filter(user=request.user).order_by('created_at')
+        if existing_wallets.count() >= 5:
+            messages.error(request, 'Wallet creation limit exceeded. You can create up to 5 wallets.')
+            return render(request, self.template_name, {
+                'active_page': 'create_wallet',
+                'existing_wallets': existing_wallets,
+                'can_create_separate': existing_wallets.count() == 1,
+            })
+
+        if existing_wallets.exists() and wallet_type != 'separate':
+            messages.info(request, 'You already have a wallet. Choose the separate option to create another one.')
+            return render(request, self.template_name, {
+                'active_page': 'create_wallet',
+                'existing_wallets': existing_wallets,
+                'can_create_separate': True,
+            })
+
+        wallet = Wallet.objects.create(
+            user=request.user,
+            wallet_number=f'WAL-{uuid.uuid4().hex[:10].upper()}',
+            currency='KHR',
+        )
+        messages.success(request, f'Wallet created successfully! Your wallet number is {wallet.wallet_number}.')
+        return redirect('dashboard')
+
+
+class WalletManagementView(LoginRequiredMixin, View):
+    """GET/POST /wallet-management/ — Manage wallet (view balance, freeze, close, etc.)."""
+    login_url = '/login/'
+    template_name = 'wallet/wallet_management.html'
+
+    def get(self, request):
+        wallets = Wallet.objects.filter(user=request.user).order_by('created_at')
+        if not wallets.exists():
+            messages.warning(request, 'You do not have a wallet. Please create one first.')
+            return redirect('create_wallet')
+
+        selected_wallet_id = request.GET.get('wallet_id')
+        wallet = wallets.filter(id=selected_wallet_id).first() if selected_wallet_id else wallets.first()
+        if not wallet:
+            wallet = wallets.first()
+
+        action = request.GET.get('action', 'select')
+        form = UpdateWalletForm(initial={'currency': wallet.currency}) if action == 'update_info' else WalletManagementForm()
+        ctx = {
+            'wallet': wallet,
+            'wallets': wallets,
+            'selected_wallet_id': wallet.id,
+            'action': action,
+            'form': form,
+            'active_page': 'wallet_management',
+        }
+        return render(request, self.template_name, ctx)
+
+    def post(self, request):
+        selected_wallet_id = request.POST.get('wallet_id') or request.GET.get('wallet_id')
+        wallets = Wallet.objects.filter(user=request.user).order_by('created_at')
+        wallet = wallets.filter(id=selected_wallet_id).first() if selected_wallet_id else wallets.first()
+        if not wallet:
+            wallet = wallets.first()
+        if not wallet:
+            messages.error(request, 'You do not have a wallet.')
+            return redirect('create_wallet')
+
+        action = request.POST.get('action')
+
+        if action == 'update_info':
+            form = UpdateWalletForm(request.POST or None, initial={'currency': wallet.currency})
+            if request.method == 'POST' and form.is_valid():
+                wallet.currency = form.cleaned_data['currency']
+                wallet.save()
+                messages.success(request, 'Wallet information updated successfully.')
+                return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
+            ctx = {
+                'wallet': wallet,
+                'wallets': wallets,
+                'selected_wallet_id': wallet.id,
+                'action': 'update_info',
+                'form': form,
+                'active_page': 'wallet_management',
+            }
+            return render(request, self.template_name, ctx)
+
+        elif action == 'freeze':
+            if wallet.status == 'frozen':
+                messages.info(request, 'Wallet is already frozen.')
+            else:
+                wallet.status = 'frozen'
+                wallet.save()
+                messages.success(request, 'Wallet has been frozen successfully.')
+            return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
+
+        elif action == 'unfreeze':
+            if wallet.status == 'active':
+                messages.info(request, 'Wallet is already active.')
+            else:
+                wallet.status = 'active'
+                wallet.save()
+                messages.success(request, 'Wallet has been unfrozen successfully.')
+            return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
+
+        elif action == 'close':
+            if wallet.balance != Decimal('0.00'):
+                messages.error(request, 'Wallet cannot be closed while it still has a balance. Please transfer or withdraw the balance first.')
+            else:
+                wallet.status = 'closed'
+                wallet.save()
+                messages.success(request, 'Wallet has been closed successfully.')
+            return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
+
+        elif action == 'reopen':
+            if wallet.status == 'closed':
+                wallet.status = 'active'
+                wallet.save()
+                messages.success(request, 'Wallet has been reopened successfully.')
+            elif wallet.status == 'active':
+                messages.info(request, 'Wallet is already active.')
+            else:
+                messages.info(request, f'Wallet is currently {wallet.status}.')
+            return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
+
+        elif action == 'delete':
+            if wallet.balance != Decimal('0.00'):
+                messages.error(request, 'Wallet cannot be deleted while it still has a balance. Please transfer or withdraw the balance first.')
+            else:
+                wallet.delete()
+                messages.success(request, 'Wallet has been deleted successfully.')
+                return redirect('wallet_management')
+            return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
+
+        return redirect('wallet_management')
 
 
 class SendMoneyView(LoginRequiredMixin, View):

@@ -96,3 +96,20 @@ class ChangePasswordForm(forms.Form):
         if cleaned.get('new_password') != cleaned.get('new_password2'):
             self.add_error('new_password2', 'New passwords do not match.')
         return cleaned
+
+
+class WalletManagementForm(forms.Form):
+    ACTION_CHOICES = [
+        ('view_balance', 'View Balance'),
+        ('view_info', 'View Wallet Information'),
+        ('update_info', 'Update Wallet Information'),
+        ('freeze', 'Freeze Wallet'),
+        ('unfreeze', 'Unfreeze Wallet'),
+        ('close', 'Close Wallet'),
+    ]
+    action = forms.ChoiceField(choices=ACTION_CHOICES, widget=forms.RadioSelect)
+
+
+class UpdateWalletForm(forms.Form):
+    CURRENCY_CHOICES = [('KHR', 'KHR'), ('USD', 'USD')]
+    currency = forms.ChoiceField(choices=CURRENCY_CHOICES, label='Currency')
