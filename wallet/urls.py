@@ -49,6 +49,10 @@ urlpatterns = [
     path('api/auth/change-password/', views.ChangePasswordView.as_view(), name='auth-change-password'),
     path('api/auth/token/refresh/',   views.AuthTokenRefreshView.as_view(), name='auth-token-refresh'),
 
+    # ── Transfer API endpoints ──────────────────────────────────────
+    path('api/transfers/p2p/',        views.PeerToPeerTransferView.as_view(), name='p2p-transfer'),
+    path('api/transfers/history/',    views.TransferHistoryView.as_view(),    name='transfer-history'),
+
     # ── Resource API endpoints (CRUD) ───────────────────────────────
     path('api/', include(router.urls)),
 ]
