@@ -1288,6 +1288,198 @@ class TransferHistoryView(APIView):
         })
 
 
+class AdminRequiredPermission(IsAuthenticated):
+    """Permission class that checks if user is admin/staff."""
+    def has_permission(self, request, view):
+        return bool(
+            request.user and
+            request.user.is_authenticated and
+            (request.user.is_staff or request.user.is_superuser or request.user.role == 'admin')
+        )
+
+
+class AdminAllTransactionsView(APIView):
+    """
+    GET /api/admin/transactions/
+    Admin endpoint to view all transactions in the system.
+    Query params:
+      - type: 'transfer', 'topup', 'withdrawal', 'bill_payment', 'all' (default: 'all')
+      - status: 'completed', 'pending', 'failed', 'refunded' (optional)
+      - user_id: filter by specific user (optional)
+      - start_date: YYYY-MM-DD (optional)
+      - end_date: YYYY-MM-DD (optional)
+      - limit: number of results (default: 100)
+      - offset: pagination offset (default: 0)
+    """
+    permission_classes = [AdminRequiredPermission]
+
+    def get(self, request):
+        tx_type = request.query_params.get('type', 'all')
+        status_filter = request.query_params.get('status')
+        user_id = request.query_params.get('user_id')
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        limit = int(request.query_params.get('limit', 100))
+        offset = int(request.query_params.get('offset', 0))
+
+        # Base queryset
+        queryset = Transaction.objects.all().select_related('wallet', 'wallet__user', 'merchant', 'biller')
+
+        # Apply filters
+        if tx_type != 'all':
+            queryset = queryset.filter(transaction_type=tx_type)
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        if user_id:
+            queryset = queryset.filter(wallet__user_id=user_id)
+        if start_date:
+            queryset = queryset.filter(created_at__date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(created_at__date__lte=end_date)
+
+        # Get total count before pagination
+        total_count = queryset.count()
+
+        # Calculate totals
+        from django.db.models import Sum
+        totals = queryset.aggregate(
+            total_amount=Sum('amount')
+        )
+
+        # Apply pagination
+        queryset = queryset.order_by('-created_at')[offset:offset + limit]
+
+        # Build response
+        transactions = []
+        for tx in queryset:
+            tx_data = {
+                'id': tx.id,
+                'reference': tx.reference,
+                'type': tx.transaction_type,
+                'amount': str(tx.amount),
+                'currency': tx.wallet.currency if tx.wallet else None,
+                'status': tx.status,
+                'description': tx.description,
+                'created_at': tx.created_at.isoformat(),
+                'user': {
+                    'id': tx.wallet.user.id if tx.wallet and tx.wallet.user else None,
+                    'full_name': tx.wallet.user.full_name if tx.wallet and tx.wallet.user else None,
+                    'email': tx.wallet.user.email if tx.wallet and tx.wallet.user else None,
+                } if tx.wallet else None,
+                'wallet': {
+                    'id': tx.wallet.id if tx.wallet else None,
+                    'wallet_number': tx.wallet.wallet_number if tx.wallet else None,
+                },
+            }
+
+            # Add transfer details if applicable
+            if tx.transaction_type == 'transfer':
+                try:
+                    transfer = Transfer.objects.select_related(
+                        'sender_wallet__user', 'receiver_wallet__user'
+                    ).get(transaction=tx)
+                    tx_data['transfer_details'] = {
+                        'sender': {
+                            'wallet_number': transfer.sender_wallet.wallet_number if transfer.sender_wallet else None,
+                            'user_name': transfer.sender_wallet.user.full_name if transfer.sender_wallet and transfer.sender_wallet.user else None,
+                        },
+                        'receiver': {
+                            'wallet_number': transfer.receiver_wallet.wallet_number if transfer.receiver_wallet else None,
+                            'user_name': transfer.receiver_wallet.user.full_name if transfer.receiver_wallet and transfer.receiver_wallet.user else None,
+                        },
+                    }
+                except Transfer.DoesNotExist:
+                    tx_data['transfer_details'] = None
+
+            transactions.append(tx_data)
+
+        return Response({
+            'total_count': total_count,
+            'returned_count': len(transactions),
+            'total_amount': str(totals['total_amount'] or 0),
+            'offset': offset,
+            'limit': limit,
+            'transactions': transactions,
+        })
+
+
+class AdminTransactionSummaryView(APIView):
+    """
+    GET /api/admin/transactions/summary/
+    Admin endpoint to get transaction summary statistics.
+    Query params:
+      - start_date: YYYY-MM-DD (optional)
+      - end_date: YYYY-MM-DD (optional)
+    """
+    permission_classes = [AdminRequiredPermission]
+
+    def get(self, request):
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+
+        queryset = Transaction.objects.all()
+
+        if start_date:
+            queryset = queryset.filter(created_at__date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(created_at__date__lte=end_date)
+
+        from django.db.models import Count, Sum
+
+        # Summary by type
+        by_type = queryset.values('transaction_type').annotate(
+            count=Count('id'),
+            total_amount=Sum('amount')
+        ).order_by('transaction_type')
+
+        # Summary by status
+        by_status = queryset.values('status').annotate(
+            count=Count('id'),
+            total_amount=Sum('amount')
+        ).order_by('status')
+
+        # Daily summary (last 30 days by default)
+        from django.utils import timezone
+        from datetime import timedelta
+
+        if not start_date:
+            daily_queryset = queryset.filter(created_at__gte=timezone.now() - timedelta(days=30))
+        else:
+            daily_queryset = queryset
+
+        daily_summary = daily_queryset.values('created_at__date').annotate(
+            count=Count('id'),
+            total_amount=Sum('amount')
+        ).order_by('-created_at__date')[:30]
+
+        return Response({
+            'by_type': [
+                {
+                    'type': item['transaction_type'],
+                    'count': item['count'],
+                    'total_amount': str(item['total_amount'] or 0)
+                }
+                for item in by_type
+            ],
+            'by_status': [
+                {
+                    'status': item['status'],
+                    'count': item['count'],
+                    'total_amount': str(item['total_amount'] or 0)
+                }
+                for item in by_status
+            ],
+            'daily_summary': [
+                {
+                    'date': item['created_at__date'].isoformat(),
+                    'count': item['count'],
+                    'total_amount': str(item['total_amount'] or 0)
+                }
+                for item in daily_summary
+            ],
+        })
+
+
 class FraudDetectionViewSet(viewsets.ModelViewSet):
     queryset = FraudDetection.objects.all()
     serializer_class = FraudDetectionSerializer

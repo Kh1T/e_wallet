@@ -53,6 +53,10 @@ urlpatterns = [
     path('api/transfers/p2p/',        views.PeerToPeerTransferView.as_view(), name='p2p-transfer'),
     path('api/transfers/history/',    views.TransferHistoryView.as_view(),    name='transfer-history'),
 
+    # ── Admin API endpoints ─────────────────────────────────────────
+    path('api/admin/transactions/',         views.AdminAllTransactionsView.as_view(),   name='admin-transactions'),
+    path('api/admin/transactions/summary/',  views.AdminTransactionSummaryView.as_view(), name='admin-transactions-summary'),
+
     # ── Resource API endpoints (CRUD) ───────────────────────────────
     path('api/', include(router.urls)),
 ]
