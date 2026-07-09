@@ -102,7 +102,7 @@ from .forms import (
     LoginForm, RegisterForm, SendMoneyForm, TopupForm,
     ProfileUpdateForm, ChangePasswordForm, KYCVerificationForm,
     WalletManagementForm, UpdateWalletForm, ChangePinForm,
-    ForgotPasswordForm, ResetPasswordForm,
+    ForgotPasswordForm, ResetPasswordForm
 )
 
 
