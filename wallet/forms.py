@@ -143,3 +143,18 @@ class WalletManagementForm(forms.Form):
 class UpdateWalletForm(forms.Form):
     CURRENCY_CHOICES = [('KHR', 'KHR'), ('USD', 'USD')]
     currency = forms.ChoiceField(choices=CURRENCY_CHOICES, label='Currency')
+
+
+class ForgotPasswordForm(forms.Form):
+    email = forms.EmailField(label='Email address')
+
+
+class ResetPasswordForm(forms.Form):
+    new_password = forms.CharField(widget=forms.PasswordInput, label='New Password')
+    new_password2 = forms.CharField(widget=forms.PasswordInput, label='Confirm New Password')
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get('new_password') != cleaned.get('new_password2'):
+            self.add_error('new_password2', 'Passwords do not match.')
+        return cleaned

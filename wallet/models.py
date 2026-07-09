@@ -10,7 +10,11 @@ class User(AbstractUser):
     phone = models.CharField(max_length=50, unique=True)
     role = models.CharField(max_length=50, default='customer')
     status = models.CharField(max_length=50, default='active')
-    
+
+    # Password reset fields
+    password_reset_token = models.CharField(max_length=255, null=True, blank=True)
+    password_reset_sent_at = models.DateTimeField(null=True, blank=True)
+
     # AbstractUser already has password, date_joined, etc.
 
 class Wallet(models.Model):
