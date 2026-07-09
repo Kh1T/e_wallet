@@ -61,7 +61,7 @@
             <h3 class="text-sm font-bold capitalize text-slate-800">{{ tx.transaction_type }}</h3>
             <p class="mt-1 text-sm text-slate-500">{{ tx.description|default:'No description' }}</p>
             <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-400">
-              <span>{{ tx.created_at|date:"M d, Y H:i" }}</span>
+              <span>{{ tx.created_at|date:"M d, Y g:i A" }}</span>
               {% if tx.reference %}
               <span class="font-mono">{{ tx.reference }}</span>
               {% endif %}
@@ -89,7 +89,7 @@
             <h3 class="text-sm font-bold text-slate-800">Received from {{ transfer.sender_wallet.user.full_name }}</h3>
             <p class="mt-1 text-sm text-slate-500">{{ transfer.transaction.description|default:'Incoming transfer' }}</p>
             <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-400">
-              <span>{{ transfer.created_at|date:"M d, Y H:i" }}</span>
+              <span>{{ transfer.created_at|date:"M d, Y g:i A" }}</span>
               {% if transfer.transaction.reference %}
               <span class="font-mono">{{ transfer.transaction.reference }}</span>
               {% endif %}

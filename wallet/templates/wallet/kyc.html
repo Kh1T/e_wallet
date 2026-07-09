@@ -15,12 +15,12 @@
         <div class="rounded-2xl p-4 bg-slate-50 border border-slate-200">
           <p class="font-semibold text-slate-700">Submitted</p>
           <p class="mt-2 text-slate-500">
-            {% if verification.created_at %}{{ verification.created_at|date:'M d, Y H:i' }}{% else %}-{% endif %}
+            {% if verification.created_at %}{{ verification.created_at|date:'M d, Y g:i A' }}{% else %}-{% endif %}
           </p>
         </div>
         <div class="rounded-2xl p-4 bg-slate-50 border border-slate-200">
           <p class="font-semibold text-slate-700">Verified At</p>
-          <p class="mt-2 text-slate-500">{% if verification.verified_at %}{{ verification.verified_at|date:'M d, Y H:i' }}{% else %}Not yet verified{% endif %}</p>
+          <p class="mt-2 text-slate-500">{% if verification.verified_at %}{{ verification.verified_at|date:'M d, Y g:i A' }}{% else %}Not yet verified{% endif %}</p>
         </div>
       </div>
       {% if verification.verification_status == 'rejected' %}

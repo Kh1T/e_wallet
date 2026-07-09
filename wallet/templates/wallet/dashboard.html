@@ -118,7 +118,7 @@
         </div>
         <div>
           <p class="text-sm font-semibold text-slate-700 capitalize">{{ tx.transaction_type }}</p>
-          <p class="text-xs text-slate-400">{{ tx.created_at|date:"M d, Y • H:i" }}</p>
+          <p class="text-xs text-slate-400">{{ tx.created_at|date:"M d, Y • g:i A" }}</p>
         </div>
       </div>
       <div class="text-right">
@@ -142,7 +142,7 @@
         </div>
         <div>
           <p class="text-sm font-semibold text-slate-700">Received from {{ t.sender_wallet.user.full_name }}</p>
-          <p class="text-xs text-slate-400">{{ t.created_at|date:"M d, Y • H:i" }}</p>
+          <p class="text-xs text-slate-400">{{ t.created_at|date:"M d, Y • g:i A" }}</p>
         </div>
       </div>
       <p class="text-sm font-bold text-emerald-600">+{{ wallet.currency }} {{ t.transaction.amount }}</p>
