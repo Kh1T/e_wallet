@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.test import TestCase
 from django.urls import reverse
 
-from .models import Topup, Transaction, User, Wallet, IdentityVerification
+from .models import Topup, Transaction, Transfer, User, Wallet, IdentityVerification
 
 
 class TopupViewTests(TestCase):
@@ -183,3 +183,66 @@ class CreateWalletViewTests(TestCase):
 
         self.assertRedirects(response, reverse('dashboard'))
         self.assertEqual(Wallet.objects.filter(user=self.user).count(), 2)
+
+
+class TransactionListViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='dara@example.com',
+            email='dara@example.com',
+            password='StrongPass123',
+            full_name='Dara Sok',
+            phone='098765432',
+        )
+        self.wallet = Wallet.objects.create(
+            user=self.user,
+            wallet_number='WAL-DARA123',
+            balance=Decimal('75000.00'),
+            currency='KHR',
+        )
+
+        self.sender = User.objects.create_user(
+            username='mina@example.com',
+            email='mina@example.com',
+            password='StrongPass123',
+            full_name='Mina Chan',
+            phone='011223344',
+        )
+        self.sender_wallet = Wallet.objects.create(
+            user=self.sender,
+            wallet_number='WAL-MINA123',
+            balance=Decimal('25000.00'),
+            currency='KHR',
+        )
+
+    def test_transactions_page_renders_wallet_activity(self):
+        self.client.login(username='dara@example.com', password='StrongPass123')
+
+        Transaction.objects.create(
+            wallet=self.wallet,
+            transaction_type='topup',
+            amount=Decimal('50000'),
+            status='completed',
+            description='Top-up via ABA Mobile',
+            reference='TOP-TEST123',
+        )
+        incoming_tx = Transaction.objects.create(
+            wallet=self.sender_wallet,
+            transaction_type='transfer',
+            amount=Decimal('10000'),
+            status='completed',
+            description='Lunch',
+            reference='TRF-TEST123',
+        )
+        Transfer.objects.create(
+            transaction=incoming_tx,
+            sender_wallet=self.sender_wallet,
+            receiver_wallet=self.wallet,
+        )
+
+        response = self.client.get(reverse('transactions'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Top-up via ABA Mobile')
+        self.assertContains(response, 'Received from Mina Chan')
+        self.assertContains(response, 'TRF-TEST123')
