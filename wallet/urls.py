@@ -30,6 +30,8 @@ urlpatterns = [
     path('login/',        views.LoginPageView.as_view(),    name='login'),
     path('register/',     views.RegisterPageView.as_view(), name='register'),
     path('logout/',       views.LogoutPageView.as_view(),   name='logout'),
+    path('forgot-password/', views.ForgotPasswordView.as_view(), name='forgot-password'),
+    path('reset-password/', views.ResetPasswordView.as_view(), name='reset-password'),
     path('dashboard/',    views.DashboardView.as_view(),    name='dashboard'),
     path('transactions/', views.TransactionListView.as_view(), name='transactions'),
     path('create-wallet/', views.CreateWalletView.as_view(), name='create_wallet'),
@@ -47,6 +49,11 @@ urlpatterns = [
     path('api/auth/me/',              views.MeView.as_view(),             name='auth-me'),
     path('api/auth/change-password/', views.ChangePasswordView.as_view(), name='auth-change-password'),
     path('api/auth/token/refresh/',   views.AuthTokenRefreshView.as_view(), name='auth-token-refresh'),
+
+    # ── Password Reset API endpoints (Resend) ───────────────────────
+    path('api/auth/password-reset/request/', views.PasswordResetRequestView.as_view(), name='password-reset-request'),
+    path('api/auth/password-reset/verify/',  views.PasswordResetVerifyView.as_view(),  name='password-reset-verify'),
+    path('api/auth/password-reset/validate/', views.PasswordResetValidateTokenView.as_view(), name='password-reset-validate'),
 
     # ── Transfer API endpoints ──────────────────────────────────────
     path('api/transfers/p2p/',        views.PeerToPeerTransferView.as_view(), name='p2p-transfer'),

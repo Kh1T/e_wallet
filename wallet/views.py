@@ -22,6 +22,12 @@ import uuid
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 
+from .email_utils import (
+    generate_reset_token,
+    send_password_reset_email,
+    send_password_reset_confirmation,
+)
+
 
 def _set_jwt_cookies(response, access_token, refresh_token=None):
     response.set_cookie(
@@ -61,6 +67,7 @@ from .forms import (
     LoginForm, RegisterForm, SendMoneyForm, TopupForm,
     ProfileUpdateForm, ChangePasswordForm, KYCVerificationForm,
     WalletManagementForm, UpdateWalletForm, ChangePinForm,
+    ForgotPasswordForm, ResetPasswordForm,
 )
 
 
@@ -138,6 +145,115 @@ class LogoutPageView(View):
     def post(self, request):
         auth_logout(request)
         return redirect('login')
+
+
+class ForgotPasswordView(View):
+    """GET/POST /forgot-password/ — Request password reset via email."""
+    template_name = 'wallet/forgot_password.html'
+
+    def get(self, request):
+        if request.user.is_authenticated:
+            return redirect('dashboard')
+        return render(request, self.template_name, {'form': ForgotPasswordForm()})
+
+    def post(self, request):
+        form = ForgotPasswordForm(request.POST)
+        if form.is_valid():
+            email = form.cleaned_data['email']
+            try:
+                user = User.objects.get(email=email)
+                # Generate reset token
+                token = generate_reset_token()
+                user.password_reset_token = token
+                user.password_reset_sent_at = timezone.now()
+                user.save()
+
+                # Build reset URL
+                reset_url = request.build_absolute_uri(
+                    reverse('reset-password') + f'?token={token}'
+                )
+
+                # Send email via Resend
+                result = send_password_reset_email(user, reset_url)
+
+                if result['success']:
+                    messages.success(request, 'Password reset link has been sent to your email.')
+                    return redirect('login')
+                else:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Failed to send reset email: {result.get('error', 'Unknown error')}")
+                    messages.error(request, f"Failed to send reset email: {result.get('error', 'Please try again later.')}")
+            except User.DoesNotExist:
+                # Don't reveal if email exists
+                messages.success(request, 'Password reset link has been sent to your email.')
+                return redirect('login')
+
+        return render(request, self.template_name, {'form': form})
+
+
+class ResetPasswordView(View):
+    """GET/POST /reset-password/ — Reset password using token."""
+    template_name = 'wallet/reset_password.html'
+
+    def get(self, request):
+        if request.user.is_authenticated:
+            return redirect('dashboard')
+
+        token = request.GET.get('token')
+        if not token:
+            messages.error(request, 'Invalid reset link.')
+            return redirect('login')
+
+        # Validate token
+        try:
+            user = User.objects.get(password_reset_token=token)
+            # Check if token is expired (1 hour)
+            if user.password_reset_sent_at:
+                time_diff = timezone.now() - user.password_reset_sent_at
+                if time_diff.total_seconds() > 3600:
+                    messages.error(request, 'Reset link has expired. Please request a new one.')
+                    return redirect('forgot-password')
+        except User.DoesNotExist:
+            messages.error(request, 'Invalid reset link.')
+            return redirect('login')
+
+        return render(request, self.template_name, {'form': ResetPasswordForm(), 'token': token})
+
+    def post(self, request):
+        token = request.POST.get('token')
+        if not token:
+            messages.error(request, 'Invalid reset link.')
+            return redirect('login')
+
+        form = ResetPasswordForm(request.POST)
+        if form.is_valid():
+            try:
+                user = User.objects.get(password_reset_token=token)
+                # Check if token is expired
+                if user.password_reset_sent_at:
+                    time_diff = timezone.now() - user.password_reset_sent_at
+                    if time_diff.total_seconds() > 3600:
+                        messages.error(request, 'Reset link has expired. Please request a new one.')
+                        return redirect('forgot-password')
+
+                # Set new password
+                user.set_password(form.cleaned_data['new_password'])
+                user.password_reset_token = None
+                user.password_reset_sent_at = None
+                user.save()
+
+                # Send confirmation email
+                send_password_reset_confirmation(user)
+
+                messages.success(request, 'Password has been reset successfully. Please log in.')
+                return redirect('login')
+
+            except User.DoesNotExist:
+                messages.error(request, 'Invalid reset link.')
+                return redirect('login')
+
+        return render(request, self.template_name, {'form': form, 'token': token})
 
 
 class DashboardView(LoginRequiredMixin, View):
@@ -1595,3 +1711,152 @@ class AdminTransactionSummaryView(APIView):
 class FraudDetectionViewSet(viewsets.ModelViewSet):
     queryset = FraudDetection.objects.all()
     serializer_class = FraudDetectionSerializer
+
+
+# ═════════════════════════════════════════
+#  PASSWORD RESET VIEWS (Resend API)
+# ═════════════════════════════════════════
+
+class PasswordResetRequestView(APIView):
+    """
+    POST /api/auth/password-reset/request/
+    Request password reset. Sends reset link via email.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email')
+
+        if not email:
+            return Response(
+                {'error': 'Email is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            # Don't reveal if email exists for security
+            return Response(
+                {'message': 'If an account exists with this email, a password reset link has been sent.'},
+                status=status.HTTP_200_OK
+            )
+
+        # Generate reset token
+        token = generate_reset_token()
+        user.password_reset_token = token
+        user.password_reset_sent_at = timezone.now()
+        user.save()
+
+        # Build reset URL
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')
+        reset_url = f"{frontend_url}/reset-password?token={token}"
+
+        # Send email via Resend
+        result = send_password_reset_email(user, reset_url)
+
+        if result['success']:
+            return Response(
+                {'message': 'If an account exists with this email, a password reset link has been sent.'},
+                status=status.HTTP_200_OK
+            )
+        else:
+            return Response(
+                {'error': 'Failed to send reset email. Please try again later.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class PasswordResetVerifyView(APIView):
+    """
+    POST /api/auth/password-reset/verify/
+    Verify reset token and set new password.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        token = request.data.get('token')
+        new_password = request.data.get('new_password')
+
+        if not token or not new_password:
+            return Response(
+                {'error': 'Token and new password are required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validate password length
+        if len(new_password) < 8:
+            return Response(
+                {'error': 'Password must be at least 8 characters long.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = User.objects.get(password_reset_token=token)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'Invalid or expired reset token.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check if token is expired (1 hour validity)
+        if user.password_reset_sent_at:
+            time_diff = timezone.now() - user.password_reset_sent_at
+            if time_diff.total_seconds() > 3600:  # 1 hour
+                return Response(
+                    {'error': 'Reset token has expired. Please request a new one.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # Set new password
+        user.set_password(new_password)
+        user.password_reset_token = None
+        user.password_reset_sent_at = None
+        user.save()
+
+        # Send confirmation email
+        send_password_reset_confirmation(user)
+
+        return Response(
+            {'message': 'Password has been reset successfully.'},
+            status=status.HTTP_200_OK
+        )
+
+
+class PasswordResetValidateTokenView(APIView):
+    """
+    GET /api/auth/password-reset/validate/?token=<token>
+    Validate if a reset token is still valid.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        token = request.query_params.get('token')
+
+        if not token:
+            return Response(
+                {'error': 'Token is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = User.objects.get(password_reset_token=token)
+        except User.DoesNotExist:
+            return Response(
+                {'valid': False, 'error': 'Invalid token.'},
+                status=status.HTTP_200_OK
+            )
+
+        # Check if token is expired
+        if user.password_reset_sent_at:
+            time_diff = timezone.now() - user.password_reset_sent_at
+            if time_diff.total_seconds() > 3600:  # 1 hour
+                return Response(
+                    {'valid': False, 'error': 'Token has expired.'},
+                    status=status.HTTP_200_OK
+                )
+
+        return Response(
+            {'valid': True, 'email': user.email},
+            status=status.HTTP_200_OK
+        )

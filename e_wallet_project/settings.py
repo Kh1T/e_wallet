@@ -153,5 +153,13 @@ LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/login/'
 
+# ── Resend Email Configuration ───────────────────────────────────────
+# Get your API key from: https://resend.com/api-keys
+RESEND_API_KEY = os.getenv('RESEND_API_KEY', '')
+RESEND_FROM_EMAIL = os.getenv('RESEND_FROM_EMAIL', 'onboarding@resend.dev')
+
+# Frontend URL for password reset links
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+
 # ── Default primary key field type ────────────────────────────────
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
