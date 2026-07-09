@@ -33,7 +33,12 @@ class TopupViewTests(TestCase):
             'submission_token': submission_token,
         })
 
-        self.assertRedirects(response, reverse('dashboard'))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], reverse('dashboard'))
+        self.assertEqual(
+            self.client.session['topup_success_speech'],
+            'ការបញ្ចូលលុយបានជោគជ័យ ចំនួន 50000 KHR!',
+        )
         self.wallet.refresh_from_db()
         self.assertEqual(self.wallet.balance, Decimal('60000.00'))
 
@@ -45,6 +50,18 @@ class TopupViewTests(TestCase):
         topup = Topup.objects.get(transaction=tx)
         self.assertEqual(topup.payment_method, 'aba_mobile')
         self.assertEqual(topup.provider, 'ABA Mobile')
+
+    def test_dashboard_consumes_topup_speech_message(self):
+        self.client.login(username='sophea@example.com', password='StrongPass123')
+        session = self.client.session
+        session['topup_success_speech'] = 'ការបញ្ចូលលុយបានជោគជ័យ ចំនួន 50000 KHR!'
+        session.save()
+
+        response = self.client.get(reverse('dashboard'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'ការបញ្ចូលលុយបានជោគជ័យ ចំនួន 50000 KHR!')
+        self.assertNotIn('topup_success_speech', self.client.session)
 
     def test_topup_rejects_amount_below_minimum(self):
         self.client.login(username='sophea@example.com', password='StrongPass123')
