@@ -222,6 +222,7 @@ class DashboardView(LoginRequiredMixin, View):
             'total_income':         total_income,
             'total_expense':        total_expense,
             'unread_count':         unread_count,
+            'topup_success_speech': request.session.pop('topup_success_speech', ''),
             'active_page':          'dashboard',
         }
         return render(request, 'wallet/dashboard.html', ctx)
@@ -582,7 +583,9 @@ class TopupView(LoginRequiredMixin, View):
                     message=f'Your wallet has been credited with {d["amount"]} {wallet.currency}.',
                 )
 
-            messages.success(request, f'Wallet topped up with {d["amount"]} {wallet.currency}!')
+            success_message = f'ការបញ្ចូលលុយបានជោគជ័យ ចំនួន {d["amount"]} {wallet.currency}!'
+            request.session['topup_success_speech'] = success_message
+            messages.success(request, success_message)
             return redirect('dashboard')
 
         return render(request, self.template_name, {
