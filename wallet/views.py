@@ -7,6 +7,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from django.conf import settings
 from django.contrib.auth import authenticate, login as auth_login, logout as auth_logout
 from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
@@ -17,9 +18,44 @@ from django.utils import timezone
 from decimal import Decimal
 import os
 import uuid
+import random
 
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+
+
+def generate_wallet_number(user):
+    """
+    Generate a 9-digit wallet number in format "XXX XXX XXX" where:
+    - First 3 digits are the same for all wallets of the same user
+    - Last 6 digits are unique (displayed as "XXX XXX")
+    """
+    # Get existing wallets for this user to determine the prefix
+    existing_wallets = Wallet.objects.filter(user=user).order_by('created_at')
+    
+    if existing_wallets.exists():
+        # Extract first 3 digits from first wallet as prefix
+        first_wallet_number = existing_wallets.first().wallet_number.replace(' ', '')
+        prefix = first_wallet_number[:3]
+    else:
+        # Generate a random 3-digit prefix for this user (010-999)
+        prefix = str(random.randint(10, 999)).zfill(3)
+    
+    # Generate a unique 6-digit suffix
+    max_attempts = 100
+    for _ in range(max_attempts):
+        suffix = str(random.randint(0, 999999)).zfill(6)
+        wallet_number_raw = prefix + suffix
+        wallet_number = f"{prefix} {suffix[:3]} {suffix[3:]}"
+        
+        # Check if this wallet number already exists (check without spaces)
+        if not Wallet.objects.filter(wallet_number=wallet_number).exists():
+            return wallet_number
+    
+    # If we can't find a unique number after max attempts, use timestamp-based approach
+    import time
+    timestamp_suffix = str(int(time.time()))[-6:].zfill(6)
+    return f"{prefix} {timestamp_suffix[:3]} {timestamp_suffix[3:]}"
 
 
 def _set_jwt_cookies(response, access_token, refresh_token=None):
@@ -59,6 +95,7 @@ from .serializers import (
 from .forms import (
     LoginForm, RegisterForm, SendMoneyForm, TopupForm,
     ProfileUpdateForm, ChangePasswordForm, KYCVerificationForm,
+    WalletManagementForm, UpdateWalletForm,
 )
 
 
@@ -125,14 +162,9 @@ class RegisterPageView(View):
                 )
                 user.set_password(d['password'])
                 user.save()
-                Wallet.objects.create(
-                    user=user,
-                    wallet_number=f'WAL-{uuid.uuid4().hex[:10].upper()}',
-                    currency='KHR',
-                )
                 auth_login(request, user)
-                messages.success(request, f'Welcome, {user.full_name}! Your wallet has been created.')
-                return redirect('dashboard')
+                messages.success(request, f'Welcome, {user.full_name}! Please create your new E-wallet to continue.')
+                return redirect('create_wallet')
         return render(request, self.template_name, {'form': form})
 
 
@@ -195,6 +227,23 @@ class DashboardView(LoginRequiredMixin, View):
         return render(request, 'wallet/dashboard.html', ctx)
 
 
+class AccountsView(LoginRequiredMixin, View):
+    """GET /accounts/ — View all user accounts/wallets with balances."""
+    login_url = '/login/'
+    template_name = 'wallet/accounts.html'
+
+    def get(self, request):
+        wallets = Wallet.objects.filter(user=request.user).order_by('created_at')
+        total_balance = wallets.aggregate(total=Sum('balance'))['total'] or Decimal('0')
+
+        ctx = {
+            'wallets': wallets,
+            'total_balance': total_balance,
+            'active_page': 'accounts',
+        }
+        return render(request, self.template_name, ctx)
+
+
 class TransactionListView(LoginRequiredMixin, View):
     """GET /transactions/ — Full transaction history."""
     login_url = '/login/'
@@ -224,6 +273,169 @@ class TransactionListView(LoginRequiredMixin, View):
             'active_page':          'transactions',
         }
         return render(request, 'wallet/transactions.html', ctx)
+
+
+class CreateWalletView(LoginRequiredMixin, View):
+    """GET/POST /create-wallet/ — Create a wallet for the authenticated user."""
+    login_url = '/login/'
+    template_name = 'wallet/create_wallet.html'
+
+    def get(self, request):
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        is_kyc_verified = bool(verification and verification.verification_status == 'verified')
+
+        existing_wallets = Wallet.objects.filter(user=request.user).order_by('created_at')
+        wallet = existing_wallets.first()
+        if not is_kyc_verified:
+            messages.warning(request, 'KYC verification is required before creating a wallet. Please complete your KYC first.')
+            return redirect('kyc')
+
+        if existing_wallets.count() >= 5:
+            messages.info(request, 'Wallet creation limit reached. You can create up to 5 wallets.')
+            return render(request, self.template_name, {
+                'active_page': 'create_wallet',
+                'existing_wallets': existing_wallets,
+                'can_create_separate': False,
+            })
+        if wallet and existing_wallets.count() >= 1:
+            return render(request, self.template_name, {
+                'active_page': 'create_wallet',
+                'existing_wallets': existing_wallets,
+                'can_create_separate': True,
+            })
+        return render(request, self.template_name, {'active_page': 'create_wallet', 'existing_wallets': existing_wallets})
+
+    def post(self, request):
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        is_kyc_verified = bool(verification and verification.verification_status == 'verified')
+        if not is_kyc_verified:
+            messages.error(request, 'KYC verification is required before creating a wallet. Please complete your KYC first.')
+            return redirect('kyc')
+
+        wallet_type = request.POST.get('wallet_type', 'primary')
+        existing_wallets = Wallet.objects.filter(user=request.user).order_by('created_at')
+        if existing_wallets.count() >= 5:
+            messages.error(request, 'Wallet creation limit exceeded. You can create up to 5 wallets.')
+            return render(request, self.template_name, {
+                'active_page': 'create_wallet',
+                'existing_wallets': existing_wallets,
+                'can_create_separate': existing_wallets.count() == 1,
+            })
+
+        if existing_wallets.exists() and wallet_type != 'separate':
+            messages.info(request, 'You already have a wallet. Choose the separate option to create another one.')
+            return render(request, self.template_name, {
+                'active_page': 'create_wallet',
+                'existing_wallets': existing_wallets,
+                'can_create_separate': True,
+            })
+
+        wallet = Wallet.objects.create(
+            user=request.user,
+            wallet_number=generate_wallet_number(request.user),
+            currency='KHR',
+        )
+        messages.success(request, f'Wallet created successfully! Your wallet number is {wallet.wallet_number}.')
+        return redirect('dashboard')
+
+
+class WalletManagementView(LoginRequiredMixin, View):
+    """GET/POST /wallet-management/ — Manage wallet (view balance, freeze, close, etc.)."""
+    login_url = '/login/'
+    template_name = 'wallet/wallet_management.html'
+
+    def get(self, request):
+        wallets = Wallet.objects.filter(user=request.user).order_by('created_at')
+        if not wallets.exists():
+            messages.warning(request, 'You do not have a wallet. Please create one first.')
+            return redirect('create_wallet')
+
+        selected_wallet_id = request.GET.get('wallet_id')
+        wallet = wallets.filter(id=selected_wallet_id).first() if selected_wallet_id else wallets.first()
+        if not wallet:
+            wallet = wallets.first()
+
+        action = request.GET.get('action', 'select')
+        form = UpdateWalletForm(initial={'currency': wallet.currency}) if action == 'update_info' else WalletManagementForm()
+        ctx = {
+            'wallet': wallet,
+            'wallets': wallets,
+            'selected_wallet_id': wallet.id,
+            'action': action,
+            'form': form,
+            'active_page': 'wallet_management',
+        }
+        return render(request, self.template_name, ctx)
+
+    def post(self, request):
+        selected_wallet_id = request.POST.get('wallet_id') or request.GET.get('wallet_id')
+        wallets = Wallet.objects.filter(user=request.user).order_by('created_at')
+        wallet = wallets.filter(id=selected_wallet_id).first() if selected_wallet_id else wallets.first()
+        if not wallet:
+            wallet = wallets.first()
+        if not wallet:
+            messages.error(request, 'You do not have a wallet.')
+            return redirect('create_wallet')
+
+        action = request.POST.get('action')
+
+        if action == 'update_info':
+            form = UpdateWalletForm(request.POST or None, initial={'currency': wallet.currency})
+            if request.method == 'POST' and form.is_valid():
+                wallet.currency = form.cleaned_data['currency']
+                wallet.save()
+                messages.success(request, 'Wallet information updated successfully.')
+                return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
+            ctx = {
+                'wallet': wallet,
+                'wallets': wallets,
+                'selected_wallet_id': wallet.id,
+                'action': 'update_info',
+                'form': form,
+                'active_page': 'wallet_management',
+            }
+            return render(request, self.template_name, ctx)
+
+        elif action == 'freeze':
+            if wallet.status == 'frozen':
+                messages.info(request, 'Wallet is already frozen.')
+            else:
+                wallet.status = 'frozen'
+                wallet.save()
+                messages.success(request, 'Wallet has been frozen successfully.')
+            return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
+
+        elif action == 'unfreeze':
+            if wallet.status == 'active':
+                messages.info(request, 'Wallet is already active.')
+            else:
+                wallet.status = 'active'
+                wallet.save()
+                messages.success(request, 'Wallet has been unfrozen successfully.')
+            return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
+
+        elif action == 'close':
+            if wallet.balance != Decimal('0.00'):
+                messages.error(request, 'Wallet cannot be closed while it still has a balance. Please transfer or withdraw the balance first.')
+            else:
+                wallet.status = 'closed'
+                wallet.save()
+                messages.success(request, 'Wallet has been closed successfully.')
+            return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
+
+        elif action == 'reopen':
+            if wallet.status == 'closed':
+                wallet.status = 'active'
+                wallet.save()
+                messages.success(request, 'Wallet has been reopened successfully.')
+            elif wallet.status == 'active':
+                messages.info(request, 'Wallet is already active.')
+            else:
+                messages.info(request, f'Wallet is currently {wallet.status}.')
+            return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
+
+
+        return redirect('wallet_management')
 
 
 class SendMoneyView(LoginRequiredMixin, View):
@@ -466,68 +678,71 @@ class KYCVerificationView(LoginRequiredMixin, View):
 
     def post(self, request):
         verification, _ = IdentityVerification.objects.get_or_create(user=request.user)
-        form = KYCVerificationForm(request.POST, request.FILES)
+        form = KYCVerificationForm(request.POST, request.FILES, user=request.user)
         if form.is_valid():
             d = form.cleaned_data
             request.user.full_name = d['full_name']
             request.user.save()
             id_document = d['id_document']
             
-            # Handle ID document
-            id_path = default_storage.save(
-                f'kyc/{request.user.id}/id_document_{uuid.uuid4().hex[:8]}.{id_document.name.split(".")[-1]}',
-                id_document
-            )
-            
-            # Handle selfie - either from file upload or camera capture
-            selfie_image = d.get('selfie_image')
-            selfie_image_data = request.POST.get('selfie_image_data')
-            
-            if selfie_image:
-                # File upload
-                selfie_path = default_storage.save(
-                    f'kyc/{request.user.id}/selfie_{uuid.uuid4().hex[:8]}.{selfie_image.name.split(".")[-1]}',
-                    selfie_image
+            try:
+                # Handle ID document
+                id_path = default_storage.save(
+                    f'kyc/{request.user.id}/id_document_{uuid.uuid4().hex[:8]}.{id_document.name.split(".")[-1]}',
+                    id_document
                 )
-            elif selfie_image_data:
-                # Camera capture - base64 data
-                import base64
-                from django.core.files.base import ContentFile
                 
-                # Remove the data URL prefix if present
-                if ';base64,' in selfie_image_data:
-                    format, imgstr = selfie_image_data.split(';base64,')
-                    ext = format.split('/')[-1] if '/' in format else 'jpg'
+                # Handle selfie - either from file upload or camera capture
+                selfie_image = d.get('selfie_image')
+                selfie_image_data = request.POST.get('selfie_image_data')
+                
+                if selfie_image:
+                    # File upload
+                    selfie_path = default_storage.save(
+                        f'kyc/{request.user.id}/selfie_{uuid.uuid4().hex[:8]}.{selfie_image.name.split(".")[-1]}',
+                        selfie_image
+                    )
+                elif selfie_image_data:
+                    # Camera capture - base64 data
+                    import base64
+                    from django.core.files.base import ContentFile
+                    
+                    # Remove the data URL prefix if present
+                    if ';base64,' in selfie_image_data:
+                        format, imgstr = selfie_image_data.split(';base64,')
+                        ext = format.split('/')[-1] if '/' in format else 'jpg'
+                    else:
+                        imgstr = selfie_image_data
+                        ext = 'jpg'
+                    
+                    # Decode base64 and save
+                    image_data = base64.b64decode(imgstr)
+                    file_name = f'selfie_{uuid.uuid4().hex[:8]}.{ext}'
+                    selfie_path = default_storage.save(
+                        f'kyc/{request.user.id}/{file_name}',
+                        ContentFile(image_data)
+                    )
                 else:
-                    imgstr = selfie_image_data
-                    ext = 'jpg'
+                    form.add_error('selfie_image', 'Please provide a selfie image.')
+                    return render(request, self.template_name, {
+                        'form': form,
+                        'verification': verification,
+                        'active_page': 'kyc',
+                    })
                 
-                # Decode base64 and save
-                image_data = base64.b64decode(imgstr)
-                file_name = f'selfie_{uuid.uuid4().hex[:8]}.{ext}'
-                selfie_path = default_storage.save(
-                    f'kyc/{request.user.id}/{file_name}',
-                    ContentFile(image_data)
-                )
-            else:
-                form.add_error('selfie_image', 'Please provide a selfie image.')
-                return render(request, self.template_name, {
-                    'form': form,
-                    'verification': verification,
-                    'active_page': 'kyc',
-                })
-            
-            verification.date_of_birth = d['date_of_birth']
-            verification.address = d['address']
-            verification.nationality = d['nationality']
-            verification.national_id = d['national_id']
-            verification.id_document = id_path
-            verification.selfie_image = selfie_path
-            verification.verification_status = 'pending'
-            verification.verified_at = None
-            verification.save()
-            messages.success(request, 'KYC documents submitted successfully. Verification is pending.')
-            return redirect('kyc')
+                verification.date_of_birth = d['date_of_birth']
+                verification.address = d['address']
+                verification.nationality = d['nationality']
+                verification.national_id = d['national_id']
+                verification.id_document = id_path
+                verification.selfie_image = selfie_path
+                verification.verification_status = 'pending'
+                verification.verified_at = None
+                verification.save()
+                messages.success(request, 'KYC documents submitted successfully. Verification is pending.')
+                return redirect('kyc')
+            except Exception:
+                form.add_error('national_id', 'This National ID is already registered with another account.')
 
         return render(request, self.template_name, {
             'form': form,

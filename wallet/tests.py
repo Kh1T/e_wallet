@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.test import TestCase
 from django.urls import reverse
 
-from .models import Topup, Transaction, User, Wallet
+from .models import Topup, Transaction, User, Wallet, IdentityVerification
 
 
 class TopupViewTests(TestCase):
@@ -76,3 +76,110 @@ class TopupViewTests(TestCase):
         self.assertRedirects(first_response, reverse('dashboard'))
         self.assertRedirects(second_response, reverse('topup'))
         self.assertEqual(Transaction.objects.count(), 1)
+
+
+class WalletManagementViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='mona@example.com',
+            email='mona@example.com',
+            password='StrongPass123',
+            full_name='Mona Sok',
+            phone='011223344',
+        )
+        self.wallet = Wallet.objects.create(
+            user=self.user,
+            wallet_number='WAL-TEST456',
+            balance=Decimal('5000.00'),
+            currency='KHR',
+            status='closed',
+        )
+        self.second_wallet = Wallet.objects.create(
+            user=self.user,
+            wallet_number='WAL-TEST789',
+            balance=Decimal('3000.00'),
+            currency='KHR',
+        )
+
+    def test_reopen_closed_wallet(self):
+        self.client.login(username='mona@example.com', password='StrongPass123')
+
+        response = self.client.post(reverse('wallet_management'), {'action': 'reopen'})
+
+        self.assertRedirects(response, f"{reverse('wallet_management')}?wallet_id={self.wallet.id}")
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.status, 'active')
+
+    def test_manage_wallet_can_target_selected_wallet(self):
+        self.client.login(username='mona@example.com', password='StrongPass123')
+
+        response = self.client.get(reverse('wallet_management'), {'wallet_id': self.second_wallet.id})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self.second_wallet.wallet_number)
+
+    def test_update_info_form_initializes_with_wallet_currency(self):
+        self.client.login(username='mona@example.com', password='StrongPass123')
+
+        response = self.client.get(reverse('wallet_management'), {'action': 'update_info', 'wallet_id': self.second_wallet.id})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['form'].initial['currency'], self.second_wallet.currency)
+
+    def test_close_wallet_post_keeps_selected_wallet_context(self):
+        self.client.login(username='mona@example.com', password='StrongPass123')
+        self.second_wallet.balance = Decimal('0.00')
+        self.second_wallet.save(update_fields=['balance'])
+
+        response = self.client.post(
+            reverse('wallet_management'),
+            {'action': 'close', 'wallet_id': self.second_wallet.id},
+        )
+
+        self.assertRedirects(response, f"{reverse('wallet_management')}?wallet_id={self.second_wallet.id}")
+        self.second_wallet.refresh_from_db()
+        self.assertEqual(self.second_wallet.status, 'closed')
+
+
+class CreateWalletViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='nara@example.com',
+            email='nara@example.com',
+            password='StrongPass123',
+            full_name='Nara Kim',
+            phone='055667788',
+        )
+        self.wallet = Wallet.objects.create(
+            user=self.user,
+            wallet_number='WAL-TEST789',
+            balance=Decimal('2000.00'),
+            currency='KHR',
+        )
+
+    def test_create_wallet_page_stays_available_before_limit(self):
+        IdentityVerification.objects.create(user=self.user, verification_status='verified')
+        Wallet.objects.create(user=self.user, wallet_number='WAL-TEST790', balance=Decimal('1000.00'), currency='KHR')
+        self.client.login(username='nara@example.com', password='StrongPass123')
+
+        response = self.client.get(reverse('create_wallet'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Create Wallet')
+
+    def test_unverified_user_cannot_create_wallet(self):
+        self.client.login(username='nara@example.com', password='StrongPass123')
+
+        response = self.client.post(reverse('create_wallet'), {'wallet_type': 'separate'})
+
+        self.assertRedirects(response, reverse('kyc'))
+        self.assertEqual(Wallet.objects.filter(user=self.user).count(), 1)
+
+    def test_create_separate_wallet_for_existing_user(self):
+        IdentityVerification.objects.create(user=self.user, verification_status='verified')
+        self.client.login(username='nara@example.com', password='StrongPass123')
+
+        response = self.client.post(reverse('create_wallet'), {'wallet_type': 'separate'})
+
+        self.assertRedirects(response, reverse('dashboard'))
+        self.assertEqual(Wallet.objects.filter(user=self.user).count(), 2)

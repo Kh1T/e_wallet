@@ -6,6 +6,41 @@ from .models import (
     BillPayment, Withdrawal, Topup, Transfer, FraudDetection
 )
 import uuid
+import random
+
+
+def generate_wallet_number(user):
+    """
+    Generate a 9-digit wallet number in format "XXX XXX XXX" where:
+    - First 3 digits are the same for all wallets of the same user
+    - Last 6 digits are unique (displayed as "XXX XXX")
+    """
+    # Get existing wallets for this user to determine the prefix
+    existing_wallets = Wallet.objects.filter(user=user).order_by('created_at')
+    
+    if existing_wallets.exists():
+        # Extract first 3 digits from first wallet as prefix
+        first_wallet_number = existing_wallets.first().wallet_number.replace(' ', '')
+        prefix = first_wallet_number[:3]
+    else:
+        # Generate a random 3-digit prefix for this user (010-999)
+        prefix = str(random.randint(10, 999)).zfill(3)
+    
+    # Generate a unique 6-digit suffix
+    max_attempts = 100
+    for _ in range(max_attempts):
+        suffix = str(random.randint(0, 999999)).zfill(6)
+        wallet_number_raw = prefix + suffix
+        wallet_number = f"{prefix} {suffix[:3]} {suffix[3:]}"
+        
+        # Check if this wallet number already exists (check without spaces)
+        if not Wallet.objects.filter(wallet_number=wallet_number).exists():
+            return wallet_number
+    
+    # If we can't find a unique number after max attempts, use timestamp-based approach
+    import time
+    timestamp_suffix = str(int(time.time()))[-6:].zfill(6)
+    return f"{prefix} {timestamp_suffix[:3]} {timestamp_suffix[3:]}"
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -38,7 +73,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         # Auto-create a KHR wallet for the new user
         Wallet.objects.create(
             user=user,
-            wallet_number=f'WAL-{uuid.uuid4().hex[:10].upper()}',
+            wallet_number=generate_wallet_number(user),
             currency='KHR',
         )
         return user
