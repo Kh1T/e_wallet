@@ -18,9 +18,44 @@ from django.utils import timezone
 from decimal import Decimal
 import os
 import uuid
+import random
 
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+
+
+def generate_wallet_number(user):
+    """
+    Generate a 9-digit wallet number in format "XXX XXX XXX" where:
+    - First 3 digits are the same for all wallets of the same user
+    - Last 6 digits are unique (displayed as "XXX XXX")
+    """
+    # Get existing wallets for this user to determine the prefix
+    existing_wallets = Wallet.objects.filter(user=user).order_by('created_at')
+    
+    if existing_wallets.exists():
+        # Extract first 3 digits from first wallet as prefix
+        first_wallet_number = existing_wallets.first().wallet_number.replace(' ', '')
+        prefix = first_wallet_number[:3]
+    else:
+        # Generate a random 3-digit prefix for this user (010-999)
+        prefix = str(random.randint(10, 999)).zfill(3)
+    
+    # Generate a unique 6-digit suffix
+    max_attempts = 100
+    for _ in range(max_attempts):
+        suffix = str(random.randint(0, 999999)).zfill(6)
+        wallet_number_raw = prefix + suffix
+        wallet_number = f"{prefix} {suffix[:3]} {suffix[3:]}"
+        
+        # Check if this wallet number already exists (check without spaces)
+        if not Wallet.objects.filter(wallet_number=wallet_number).exists():
+            return wallet_number
+    
+    # If we can't find a unique number after max attempts, use timestamp-based approach
+    import time
+    timestamp_suffix = str(int(time.time()))[-6:].zfill(6)
+    return f"{prefix} {timestamp_suffix[:3]} {timestamp_suffix[3:]}"
 
 
 def _set_jwt_cookies(response, access_token, refresh_token=None):
@@ -192,6 +227,23 @@ class DashboardView(LoginRequiredMixin, View):
         return render(request, 'wallet/dashboard.html', ctx)
 
 
+class AccountsView(LoginRequiredMixin, View):
+    """GET /accounts/ — View all user accounts/wallets with balances."""
+    login_url = '/login/'
+    template_name = 'wallet/accounts.html'
+
+    def get(self, request):
+        wallets = Wallet.objects.filter(user=request.user).order_by('created_at')
+        total_balance = wallets.aggregate(total=Sum('balance'))['total'] or Decimal('0')
+
+        ctx = {
+            'wallets': wallets,
+            'total_balance': total_balance,
+            'active_page': 'accounts',
+        }
+        return render(request, self.template_name, ctx)
+
+
 class TransactionListView(LoginRequiredMixin, View):
     """GET /transactions/ — Full transaction history."""
     login_url = '/login/'
@@ -280,7 +332,7 @@ class CreateWalletView(LoginRequiredMixin, View):
 
         wallet = Wallet.objects.create(
             user=request.user,
-            wallet_number=f'WAL-{uuid.uuid4().hex[:10].upper()}',
+            wallet_number=generate_wallet_number(request.user),
             currency='KHR',
         )
         messages.success(request, f'Wallet created successfully! Your wallet number is {wallet.wallet_number}.')

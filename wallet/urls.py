@@ -31,6 +31,7 @@ urlpatterns = [
     path('register/',     views.RegisterPageView.as_view(), name='register'),
     path('logout/',       views.LogoutPageView.as_view(),   name='logout'),
     path('dashboard/',    views.DashboardView.as_view(),    name='dashboard'),
+    path('accounts/',     views.AccountsView.as_view(),   name='accounts'),
     path('transactions/', views.TransactionListView.as_view(), name='transactions'),
     path('create-wallet/', views.CreateWalletView.as_view(), name='create_wallet'),
     path('wallet-management/', views.WalletManagementView.as_view(), name='wallet_management'),
