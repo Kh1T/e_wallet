@@ -28,6 +28,36 @@ class SendMoneyForm(forms.Form):
         min_value=Decimal('0.01'), max_digits=12, decimal_places=2
     )
     description = forms.CharField(max_length=255, required=False)
+    pin         = forms.CharField(max_length=6, min_length=4, widget=forms.PasswordInput, label='Transaction PIN')
+    otp_code    = forms.CharField(max_length=6, required=False, label='OTP Code')
+
+
+class ChangePinForm(forms.Form):
+    old_pin = forms.CharField(
+        max_length=6, min_length=4, widget=forms.PasswordInput, required=False, label='Current PIN (if set)'
+    )
+    new_pin = forms.CharField(
+        max_length=6, min_length=4, widget=forms.PasswordInput, label='New PIN'
+    )
+    new_pin2 = forms.CharField(
+        max_length=6, min_length=4, widget=forms.PasswordInput, label='Confirm New PIN'
+    )
+
+    def __init__(self, *args, has_pin=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        if has_pin:
+            self.fields['old_pin'].required = True
+
+    def clean(self):
+        cleaned = super().clean()
+        new_pin = cleaned.get('new_pin')
+        new_pin2 = cleaned.get('new_pin2')
+        if new_pin and new_pin2 and new_pin != new_pin2:
+            self.add_error('new_pin2', 'New PINs do not match.')
+        if new_pin and not new_pin.isdigit():
+            self.add_error('new_pin', 'PIN must contain only digits.')
+        return cleaned
+
 
 
 class TopupForm(forms.Form):
