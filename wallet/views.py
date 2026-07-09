@@ -95,7 +95,7 @@ from .serializers import (
 from .forms import (
     LoginForm, RegisterForm, SendMoneyForm, TopupForm,
     ProfileUpdateForm, ChangePasswordForm, KYCVerificationForm,
-    WalletManagementForm, UpdateWalletForm,
+    WalletManagementForm, UpdateWalletForm, ChangePinForm,
 )
 
 
@@ -439,7 +439,7 @@ class WalletManagementView(LoginRequiredMixin, View):
 
 
 class SendMoneyView(LoginRequiredMixin, View):
-    """GET/POST /send/ — Transfer money to another wallet by wallet number."""
+    """GET/POST /send/ — Transfer money to another wallet by wallet number with PIN and OTP verification."""
     login_url = '/login/'
     template_name = 'wallet/send.html'
 
@@ -447,12 +447,22 @@ class SendMoneyView(LoginRequiredMixin, View):
         wallet = Wallet.objects.filter(user=request.user).first()
         verification = IdentityVerification.objects.filter(user=request.user).first()
         kyc_verified = verification and verification.verification_status == 'verified'
+        security, _ = Security.objects.get_or_create(user=request.user)
+        has_pin = bool(security.pin_hash)
 
         if not kyc_verified:
             messages.warning(request, 'KYC verification is required to send money. Please complete your KYC verification.')
+        elif not has_pin:
+            messages.warning(request, 'You must set up a transaction PIN in your profile settings before sending money.')
 
         return render(request, self.template_name, {
-            'form': SendMoneyForm(), 'wallet': wallet, 'kyc_verified': kyc_verified, 'active_page': 'send',
+            'form': SendMoneyForm(),
+            'wallet': wallet,
+            'kyc_verified': kyc_verified,
+            'has_pin': has_pin,
+            'otp_required': security.otp_enabled,
+            'otp_challenge': False,
+            'active_page': 'send',
         })
 
     def post(self, request):
@@ -462,12 +472,18 @@ class SendMoneyView(LoginRequiredMixin, View):
         # Check KYC verification status
         verification = IdentityVerification.objects.filter(user=request.user).first()
         kyc_verified = verification and verification.verification_status == 'verified'
+        security, _ = Security.objects.get_or_create(user=request.user)
+        has_pin = bool(security.pin_hash)
 
         if not kyc_verified:
             messages.error(request, 'KYC verification is required to send money. Please complete your KYC verification.')
             return render(request, self.template_name, {
-                'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'active_page': 'send'
+                'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
             })
+
+        if not has_pin:
+            messages.error(request, 'You must set up a transaction PIN in your profile settings before sending money.')
+            return redirect('profile')
 
         if not wallet:
             messages.error(request, 'You do not have a wallet yet.')
@@ -475,19 +491,81 @@ class SendMoneyView(LoginRequiredMixin, View):
 
         if form.is_valid():
             d = form.cleaned_data
+            
+            # 1. Verify PIN
+            from django.contrib.auth.hashers import check_password
+            if not check_password(d['pin'], security.pin_hash):
+                form.add_error('pin', 'Invalid transaction PIN.')
+                return render(request, self.template_name, {
+                    'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+                })
+
+            # 2. Verify OTP if enabled
+            if security.otp_enabled:
+                otp_code = d.get('otp_code')
+                if not otp_code:
+                    # Generate and send OTP
+                    import random
+                    otp = str(random.randint(100000, 999999))
+                    security.temp_otp = otp
+                    security.temp_otp_expiry = timezone.now() + timezone.timedelta(minutes=5)
+                    security.save()
+
+                    Notification.objects.create(
+                        user=request.user,
+                        title='Transfer OTP Code',
+                        message=f'Your OTP code for sending money is: {otp}',
+                    )
+                    messages.info(request, 'An OTP has been generated. Please check your notifications to verify.')
+                    
+                    return render(request, self.template_name, {
+                        'form': form,
+                        'wallet': wallet,
+                        'kyc_verified': kyc_verified,
+                        'has_pin': has_pin,
+                        'otp_required': True,
+                        'otp_challenge': True,
+                        'active_page': 'send',
+                    })
+                
+                # If OTP code is submitted, verify it
+                if security.temp_otp != otp_code or security.temp_otp_expiry < timezone.now():
+                    form.add_error('otp_code', 'Invalid or expired OTP code.')
+                    return render(request, self.template_name, {
+                        'form': form,
+                        'wallet': wallet,
+                        'kyc_verified': kyc_verified,
+                        'has_pin': has_pin,
+                        'otp_required': True,
+                        'otp_challenge': True,
+                        'active_page': 'send',
+                    })
+
+            # Clear temporary OTP once validation succeeds
+            if security.otp_enabled:
+                security.temp_otp = None
+                security.temp_otp_expiry = None
+                security.save()
+
             try:
                 recipient = Wallet.objects.get(wallet_number=d['recipient_wallet'])
             except Wallet.DoesNotExist:
                 form.add_error('recipient_wallet', 'Wallet number not found.')
-                return render(request, self.template_name, {'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'active_page': 'send'})
+                return render(request, self.template_name, {
+                    'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+                })
 
             if recipient.pk == wallet.pk:
                 form.add_error('recipient_wallet', 'You cannot transfer to your own wallet.')
-                return render(request, self.template_name, {'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'active_page': 'send'})
+                return render(request, self.template_name, {
+                    'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+                })
 
             if wallet.balance < d['amount']:
                 form.add_error('amount', f'Insufficient balance. Available: {wallet.balance} {wallet.currency}')
-                return render(request, self.template_name, {'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'active_page': 'send'})
+                return render(request, self.template_name, {
+                    'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+                })
 
             with db_transaction.atomic():
                 tx = Transaction.objects.create(
@@ -507,17 +585,26 @@ class SendMoneyView(LoginRequiredMixin, View):
                 recipient.balance += d['amount']
                 wallet.save()
                 recipient.save()
+                
                 Notification.objects.create(
                     user=recipient.user,
                     transaction=tx,
                     title='Money Received',
                     message=f'You received {d["amount"]} {wallet.currency} from {request.user.full_name}.',
                 )
+                Notification.objects.create(
+                    user=request.user,
+                    transaction=tx,
+                    title='Money Sent',
+                    message=f'You sent {d["amount"]} {wallet.currency} to {recipient.user.full_name}.',
+                )
 
             messages.success(request, f'Successfully sent {d["amount"]} {wallet.currency} to {recipient.wallet_number}!')
             return redirect('dashboard')
 
-        return render(request, self.template_name, {'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'active_page': 'send'})
+        return render(request, self.template_name, {
+            'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+        })
 
 
 class TopupView(LoginRequiredMixin, View):
@@ -595,26 +682,32 @@ class TopupView(LoginRequiredMixin, View):
 
 
 class ProfileView(LoginRequiredMixin, View):
-    """GET/POST /profile/ — View & update profile, change password."""
+    """GET/POST /profile/ — View & update profile, change password, manage security PIN and OTP."""
     login_url = '/login/'
     template_name = 'wallet/profile.html'
 
     def get(self, request):
+        security, _ = Security.objects.get_or_create(user=request.user)
         profile_form  = ProfileUpdateForm(initial={
             'full_name': request.user.full_name,
             'phone':     request.user.phone,
         })
         password_form = ChangePasswordForm()
+        pin_form = ChangePinForm(has_pin=bool(security.pin_hash))
         return render(request, self.template_name, {
             'profile_form':  profile_form,
             'password_form': password_form,
+            'pin_form':      pin_form,
+            'security':      security,
             'active_page':   'profile',
         })
 
     def post(self, request):
         action = request.POST.get('action')
+        security, _ = Security.objects.get_or_create(user=request.user)
         profile_form  = ProfileUpdateForm(initial={'full_name': request.user.full_name, 'phone': request.user.phone})
         password_form = ChangePasswordForm()
+        pin_form = ChangePinForm(has_pin=bool(security.pin_hash))
 
         if action == 'update_profile':
             profile_form = ProfileUpdateForm(request.POST)
@@ -639,9 +732,39 @@ class ProfileView(LoginRequiredMixin, View):
                     messages.success(request, 'Password changed successfully!')
                     return redirect('profile')
 
+        elif action == 'change_pin':
+            pin_form = ChangePinForm(request.POST, has_pin=bool(security.pin_hash))
+            if pin_form.is_valid():
+                d = pin_form.cleaned_data
+                from django.contrib.auth.hashers import make_password, check_password
+                if security.pin_hash:
+                    if not check_password(d['old_pin'], security.pin_hash):
+                        pin_form.add_error('old_pin', 'Current PIN is incorrect.')
+                        return render(request, self.template_name, {
+                            'profile_form':  profile_form,
+                            'password_form': password_form,
+                            'pin_form':      pin_form,
+                            'security':      security,
+                            'active_page':   'profile',
+                        })
+                security.pin_hash = make_password(d['new_pin'])
+                security.save()
+                messages.success(request, 'Transaction PIN updated successfully!')
+                return redirect('profile')
+
+        elif action == 'toggle_security':
+            otp_enabled = request.POST.get('otp_enabled') == 'on'
+            security.otp_enabled = otp_enabled
+            security.two_factor_enabled = otp_enabled
+            security.save()
+            messages.success(request, f"OTP validation {'enabled' if otp_enabled else 'disabled'} successfully!")
+            return redirect('profile')
+
         return render(request, self.template_name, {
             'profile_form':  profile_form,
             'password_form': password_form,
+            'pin_form':      pin_form,
+            'security':      security,
             'active_page':   'profile',
         })
 
@@ -1079,6 +1202,47 @@ class PeerToPeerTransferView(APIView):
         recipient_wallet_number = request.data.get('recipient_wallet_number')
         amount = request.data.get('amount')
         description = request.data.get('description', '')
+
+        # Verify Security Settings (PIN and OTP)
+        security, _ = Security.objects.get_or_create(user=request.user)
+        if not security.pin_hash:
+            return Response({'error': 'Please set up a transaction PIN in your security settings before sending money.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        pin = request.data.get('pin')
+        if not pin:
+            return Response({'error': 'Transaction PIN is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        from django.contrib.auth.hashers import check_password
+        if not check_password(pin, security.pin_hash):
+            return Response({'error': 'Invalid transaction PIN.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if security.otp_enabled:
+            otp = request.data.get('otp')
+            if not otp:
+                import random
+                otp_val = str(random.randint(100000, 999999))
+                security.temp_otp = otp_val
+                security.temp_otp_expiry = timezone.now() + timezone.timedelta(minutes=5)
+                security.save()
+
+                Notification.objects.create(
+                    user=request.user,
+                    title='Transfer OTP Code',
+                    message=f'Your OTP code for sending money is: {otp_val}',
+                )
+                return Response({
+                    'error': 'OTP verification required.',
+                    'otp_required': True
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            if security.temp_otp != otp or security.temp_otp_expiry < timezone.now():
+                return Response({'error': 'Invalid or expired OTP code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Clear OTP on success
+        if security.otp_enabled:
+            security.temp_otp = None
+            security.temp_otp_expiry = None
+            security.save()
 
         # Validate KYC
         verification = IdentityVerification.objects.filter(user=request.user).first()

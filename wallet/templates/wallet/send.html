@@ -33,36 +33,94 @@
     </div>
     {% endif %}
 
-    <form method="post" class="space-y-5" {% if not kyc_verified %}onsubmit="return false;"{% endif %}>
+    <form method="post" id="send-form" class="space-y-5" {% if not kyc_verified or not has_pin %}onsubmit="return false;"{% endif %}>
       {% csrf_token %}
 
       <div>
         <label class="block text-sm font-semibold text-slate-700 mb-2">Recipient Wallet Number</label>
         <input type="text" name="recipient_wallet" value="{{ form.recipient_wallet.value|default:'' }}"
-               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified %}bg-slate-100 cursor-not-allowed{% endif %}"
-               {% if not kyc_verified %}disabled{% endif %}>
+               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
+               {% if not kyc_verified or not has_pin %}disabled{% endif %}>
         {% if form.recipient_wallet.errors %}<p class="text-red-500 text-xs mt-1">{{ form.recipient_wallet.errors.0 }}</p>{% endif %}
       </div>
 
       <div>
-        <label class="block text-sm font-semibold text-slate-700 mb-2">Amount (KHR)</label>
+        <label class="block text-sm font-semibold text-slate-700 mb-2">Amount ({{ wallet.currency|default:'KHR' }})</label>
         <input type="number" name="amount" value="{{ form.amount.value|default:'' }}" step="0.01" min="0.01"
-               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified %}bg-slate-100 cursor-not-allowed{% endif %}"
-               {% if not kyc_verified %}disabled{% endif %}>
+               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
+               {% if not kyc_verified or not has_pin %}disabled{% endif %}>
         {% if form.amount.errors %}<p class="text-red-500 text-xs mt-1">{{ form.amount.errors.0 }}</p>{% endif %}
       </div>
 
       <div>
         <label class="block text-sm font-semibold text-slate-700 mb-2">Description (Optional)</label>
         <input type="text" name="description" value="{{ form.description.value|default:'' }}"
-               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified %}bg-slate-100 cursor-not-allowed{% endif %}"
-               {% if not kyc_verified %}disabled{% endif %}>
+               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
+               {% if not kyc_verified or not has_pin %}disabled{% endif %}>
       </div>
 
-      <button type="submit"
-              class="w-full inline-flex items-center justify-center rounded-xl {% if kyc_verified %}bg-blue-600 hover:bg-blue-700{% else %}bg-slate-400 cursor-not-allowed{% endif %} px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/20 transition"
-              {% if not kyc_verified %}disabled{% endif %}>
-        {% if kyc_verified %}Send Money{% else %}Complete KYC to Send{% endif %}
+      <!-- Modal Backdrop Overlay -->
+      <div id="pin-modal" class="fixed inset-0 z-50 flex items-center justify-center hidden bg-slate-900/60 backdrop-blur-sm transition-all duration-300">
+        <!-- Modal Card -->
+        <div class="bg-white rounded-3xl p-6 shadow-xl border border-slate-100 max-w-md w-full mx-4 transition-all scale-95 opacity-0 duration-300" id="modal-card">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-bold text-slate-800">Security Verification</h3>
+            <button type="button" onclick="closePinModal()" class="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+          
+          <div class="space-y-4">
+            <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+              <p class="text-xs text-slate-400">Total Transfer Amount</p>
+              <p class="text-xl font-bold text-slate-800" id="modal-amount-display">{{ wallet.currency }} 0.00</p>
+              <p class="text-xs text-slate-500 mt-1" id="modal-recipient-display">To Wallet: -</p>
+            </div>
+
+            <!-- PIN Input -->
+            <div>
+              <label class="block text-sm font-semibold text-slate-700 mb-2">Transaction PIN</label>
+              <input type="password" name="pin" id="pin-input" value="{{ form.pin.value|default:'' }}" placeholder="Enter 4-6 digit PIN"
+                     class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500"
+                     {% if not kyc_verified or not has_pin %}disabled{% endif %}>
+              {% if form.pin.errors %}<p class="text-red-500 text-xs mt-1">{{ form.pin.errors.0 }}</p>{% endif %}
+            </div>
+
+            <!-- OTP Input (Conditional) -->
+            {% if otp_challenge %}
+            <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 mt-2">
+              <label class="block text-sm font-semibold text-blue-900 mb-2">OTP Verification Code</label>
+              <input type="text" name="otp_code" value="{{ form.otp_code.value|default:'' }}" placeholder="Enter 6-digit OTP"
+                     class="w-full rounded-xl border border-blue-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500"
+                     {% if otp_challenge %}required{% endif %}>
+              {% if form.otp_code.errors %}<p class="text-red-500 text-xs mt-1">{{ form.otp_code.errors.0 }}</p>{% endif %}
+              <p class="text-xs text-blue-700 mt-2">Please enter the 6-digit code sent to your notifications.</p>
+            </div>
+            {% endif %}
+          </div>
+
+          <div class="flex gap-3 mt-6">
+            <button type="button" onclick="closePinModal()" class="flex-1 py-3 text-sm font-semibold text-slate-500 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 transition">Cancel</button>
+            <button type="submit" class="flex-1 py-3 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-lg shadow-blue-500/20 transition">Confirm & Send</button>
+          </div>
+        </div>
+      </div>
+
+      <button type="{% if kyc_verified and has_pin %}button{% else %}submit{% endif %}"
+              {% if kyc_verified and has_pin %}onclick="openPinModal()"{% endif %}
+              class="w-full inline-flex items-center justify-center rounded-xl {% if kyc_verified and has_pin %}bg-blue-600 hover:bg-blue-700{% else %}bg-slate-400 cursor-not-allowed{% endif %} px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/20 transition"
+              {% if not kyc_verified or not has_pin %}disabled{% endif %}>
+        {% if not kyc_verified %}
+          Complete KYC to Send
+        {% elif not has_pin %}
+          Setup PIN to Send
+        {% elif otp_challenge %}
+          Verify and Confirm Transfer
+        {% else %}
+          Send Money
+        {% endif %}
       </button>
     </form>
   </div>
@@ -71,4 +129,49 @@
     <a href="{% url 'dashboard' %}" class="text-sm text-slate-500 hover:text-slate-700 transition">← Back to Dashboard</a>
   </div>
 </div>
+
+<script>
+  function openPinModal() {
+      // Validate form fields first
+      const form = document.getElementById('send-form');
+      if (!form.reportValidity()) {
+          return;
+      }
+      
+      // Update values in modal
+      const recipient = document.querySelector('input[name="recipient_wallet"]').value;
+      const amount = document.querySelector('input[name="amount"]').value;
+      const currency = "{{ wallet.currency|default:'KHR' }}";
+      
+      document.getElementById('modal-amount-display').innerText = `${currency} ${parseFloat(amount).toFixed(2)}`;
+      document.getElementById('modal-recipient-display').innerText = `To Wallet: ${recipient}`;
+
+      // Show modal
+      const modal = document.getElementById('pin-modal');
+      const card = document.getElementById('modal-card');
+      modal.classList.remove('hidden');
+      setTimeout(() => {
+          card.classList.remove('scale-95', 'opacity-0');
+          card.classList.add('scale-100', 'opacity-100');
+          document.getElementById('pin-input').focus();
+      }, 50);
+  }
+
+  function closePinModal() {
+      const modal = document.getElementById('pin-modal');
+      const card = document.getElementById('modal-card');
+      card.classList.remove('scale-100', 'opacity-100');
+      card.classList.add('scale-95', 'opacity-0');
+      setTimeout(() => {
+          modal.classList.add('hidden');
+      }, 300);
+  }
+
+  // Auto-open modal if there are errors or active OTP challenge
+  {% if form.pin.errors or form.otp_code.errors or otp_challenge %}
+  document.addEventListener("DOMContentLoaded", () => {
+      openPinModal();
+  });
+  {% endif %}
+</script>
 {% endblock %}

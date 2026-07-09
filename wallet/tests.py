@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.test import TestCase
 from django.urls import reverse
+from django.contrib.auth.hashers import make_password
 
 from .models import Topup, Transaction, User, Wallet, IdentityVerification
 
@@ -183,3 +184,102 @@ class CreateWalletViewTests(TestCase):
 
         self.assertRedirects(response, reverse('dashboard'))
         self.assertEqual(Wallet.objects.filter(user=self.user).count(), 2)
+
+
+from .models import Security
+
+class TransferSecurityTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='user@example.com',
+            email='user@example.com',
+            password='StrongPass123',
+            full_name='Test User',
+            phone='099112233',
+        )
+        self.recipient = User.objects.create_user(
+            username='recipient@example.com',
+            email='recipient@example.com',
+            password='StrongPass123',
+            full_name='Recipient User',
+            phone='099445566',
+        )
+        self.wallet = Wallet.objects.create(
+            user=self.user,
+            wallet_number='WAL-SENDER',
+            balance=Decimal('5000.00'),
+            currency='KHR',
+        )
+        self.recipient_wallet = Wallet.objects.create(
+            user=self.recipient,
+            wallet_number='WAL-RECIPIENT',
+            balance=Decimal('1000.00'),
+            currency='KHR',
+        )
+        IdentityVerification.objects.create(user=self.user, verification_status='verified')
+        IdentityVerification.objects.create(user=self.recipient, verification_status='verified')
+        # Security is created automatically via signal
+
+    def test_set_and_change_pin_via_profile(self):
+        self.client.login(username='user@example.com', password='StrongPass123')
+        
+        # Set a PIN
+        response = self.client.post(reverse('profile'), {
+            'action': 'change_pin',
+            'new_pin': '123456',
+            'new_pin2': '123456',
+        })
+        self.assertRedirects(response, reverse('profile'))
+        
+        security = Security.objects.get(user=self.user)
+        self.assertTrue(security.pin_hash is not None)
+        from django.contrib.auth.hashers import check_password
+        self.assertTrue(check_password('123456', security.pin_hash))
+
+    def test_send_money_requires_pin_and_otp_if_enabled(self):
+        self.client.login(username='user@example.com', password='StrongPass123')
+        security = Security.objects.get(user=self.user)
+        security.pin_hash = make_password('1234')
+        security.otp_enabled = True
+        security.save()
+
+        # Try to send money without OTP first
+        response = self.client.post(reverse('send'), {
+            'recipient_wallet': 'WAL-RECIPIENT',
+            'amount': '1000.00',
+            'pin': '1234',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'OTP Verification Code')
+        
+        security.refresh_from_db()
+        otp = security.temp_otp
+        self.assertTrue(otp is not None)
+
+        # Now send with the correct OTP
+        response = self.client.post(reverse('send'), {
+            'recipient_wallet': 'WAL-RECIPIENT',
+            'amount': '1000.00',
+            'pin': '1234',
+            'otp_code': otp,
+        })
+        self.assertRedirects(response, reverse('dashboard'))
+        self.wallet.refresh_from_db()
+        self.recipient_wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance, Decimal('4000.00'))
+        self.assertEqual(self.recipient_wallet.balance, Decimal('2000.00'))
+
+    def test_send_money_incorrect_pin_fails(self):
+        self.client.login(username='user@example.com', password='StrongPass123')
+        security = Security.objects.get(user=self.user)
+        security.pin_hash = make_password('1234')
+        security.save()
+
+        response = self.client.post(reverse('send'), {
+            'recipient_wallet': 'WAL-RECIPIENT',
+            'amount': '1000.00',
+            'pin': '9999',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Invalid transaction PIN.')
+
