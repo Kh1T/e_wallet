@@ -29,6 +29,12 @@ from .email_utils import (
     send_password_reset_confirmation,
 )
 
+from .email_utils import (
+    generate_reset_token,
+    send_password_reset_email,
+    send_password_reset_confirmation,
+)
+
 
 def generate_wallet_number(user):
     """
