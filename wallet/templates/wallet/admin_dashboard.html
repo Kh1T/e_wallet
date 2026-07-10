@@ -1,0 +1,560 @@
+{% extends 'wallet/base.html' %}
+{% block title %}Admin Dashboard — NexusPay{% endblock %}
+{% block page_title %}Admin Dashboard{% endblock %}
+
+{% block content %}
+
+<!-- Period Selector -->
+<div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 mb-6">
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <h2 class="text-lg font-bold text-slate-800">Platform Overview</h2>
+      <p class="text-sm text-slate-500 mt-1">Monitor system performance and financial metrics</p>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <a href="{% url 'admin_dashboard' %}?period=today" 
+         class="px-4 py-2 rounded-xl text-sm font-semibold transition-all
+                {% if selected_period == 'today' %}bg-blue-600 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
+        Today
+      </a>
+      <a href="{% url 'admin_dashboard' %}?period=week" 
+         class="px-4 py-2 rounded-xl text-sm font-semibold transition-all
+                {% if selected_period == 'week' %}bg-blue-600 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
+        This Week
+      </a>
+      <a href="{% url 'admin_dashboard' %}?period=month" 
+         class="px-4 py-2 rounded-xl text-sm font-semibold transition-all
+                {% if selected_period == 'month' %}bg-blue-600 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
+        This Month
+      </a>
+      <a href="{% url 'admin_dashboard' %}?period=year" 
+         class="px-4 py-2 rounded-xl text-sm font-semibold transition-all
+                {% if selected_period == 'year' %}bg-blue-600 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
+        This Year
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- Key Metrics Cards -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+  <!-- Total Users -->
+  <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+    <div class="flex items-center justify-between mb-3">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
+          </svg>
+        </div>
+        <p class="text-sm font-medium text-slate-500">Total Users</p>
+      </div>
+      <span class="text-xs font-medium px-2 py-1 rounded-full {% if user_change >= 0 %}bg-emerald-50 text-emerald-700{% else %}bg-red-50 text-red-700{% endif %}">
+        {% if user_change >= 0 %}+{% endif %}{{ user_change }}%
+      </span>
+    </div>
+    <p class="text-2xl font-bold text-slate-800">{{ total_users|default:'0' }}</p>
+    <p class="text-xs text-slate-400 mt-1">+{{ new_users_period }} new this period</p>
+  </div>
+
+  <!-- Total Wallets -->
+  <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+    <div class="flex items-center gap-3 mb-3">
+      <div class="w-10 h-10 bg-violet-50 rounded-xl flex items-center justify-center">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-violet-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 7V4a1 1 0 00-1-1H5a2 2 0 000 4h15a1 1 0 011 1v4h-3a2 2 0 000 4h3a1 1 0 001-1v-2a1 1 0 00-1-1"/>
+          <path d="M3 5v14a2 2 0 002 2h15a1 1 0 001-1v-4"/>
+        </svg>
+      </div>
+      <p class="text-sm font-medium text-slate-500">Total Wallets</p>
+    </div>
+    <p class="text-2xl font-bold text-slate-800">{{ total_wallets|default:'0' }}</p>
+    <p class="text-xs text-slate-400 mt-1">{{ active_wallets }} active, {{ frozen_wallets }} frozen</p>
+  </div>
+
+  <!-- Transaction Volume -->
+  <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+    <div class="flex items-center justify-between mb-3">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/>
+          </svg>
+        </div>
+        <p class="text-sm font-medium text-slate-500">Transaction Volume</p>
+      </div>
+      <span class="text-xs font-medium px-2 py-1 rounded-full {% if volume_change >= 0 %}bg-emerald-50 text-emerald-700{% else %}bg-red-50 text-red-700{% endif %}">
+        {% if volume_change >= 0 %}+{% endif %}{{ volume_change }}%
+      </span>
+    </div>
+    <p class="text-2xl font-bold text-slate-800">{{ total_volume_period|default:'0.00' }}</p>
+    <p class="text-xs text-slate-400 mt-1">{{ total_transactions_period }} transactions</p>
+  </div>
+
+  <!-- Total Balance -->
+  <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+    <div class="flex items-center gap-3 mb-3">
+      <div class="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
+        </svg>
+      </div>
+      <p class="text-sm font-medium text-slate-500">Total Platform Balance</p>
+    </div>
+    <p class="text-2xl font-bold text-slate-800">{{ total_balance|default:'0.00' }}</p>
+    <p class="text-xs text-slate-400 mt-1">Avg: {{ avg_wallet_balance|default:'0.00' }} per wallet</p>
+  </div>
+</div>
+
+<!-- Charts Section -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+  <!-- Transaction Volume Chart -->
+  <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wider">Transaction Volume (Last 30 Days)</h3>
+    </div>
+    <canvas id="volumeChart" height="200"></canvas>
+  </div>
+
+  <!-- Transaction Count Chart -->
+  <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wider">Transaction Count (Last 30 Days)</h3>
+    </div>
+    <canvas id="countChart" height="200"></canvas>
+  </div>
+</div>
+
+<!-- Transaction Breakdown & Status -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+  <!-- Transaction Type Breakdown -->
+  <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+    <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4">Transaction Breakdown</h3>
+    <div class="space-y-4">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+          </div>
+          <span class="text-sm font-medium text-slate-600">Transfers</span>
+        </div>
+        <div class="text-right">
+          <p class="text-sm font-bold text-slate-800">{{ transfers_count }}</p>
+          <p class="text-xs text-slate-400">{{ transfers_volume|default:'0.00' }}</p>
+        </div>
+      </div>
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 bg-emerald-50 rounded-lg flex items-center justify-center">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
+            </svg>
+          </div>
+          <span class="text-sm font-medium text-slate-600">Top-ups</span>
+        </div>
+        <div class="text-right">
+          <p class="text-sm font-bold text-slate-800">{{ topups_count }}</p>
+          <p class="text-xs text-slate-400">{{ topups_volume|default:'0.00' }}</p>
+        </div>
+      </div>
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 bg-red-50 rounded-lg flex items-center justify-center">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.24 8.24l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.24-8.24l2.83-2.83"/>
+            </svg>
+          </div>
+          <span class="text-sm font-medium text-slate-600">Withdrawals</span>
+        </div>
+        <div class="text-right">
+          <p class="text-sm font-bold text-slate-800">{{ withdrawals_count }}</p>
+          <p class="text-xs text-slate-400">{{ withdrawals_volume|default:'0.00' }}</p>
+        </div>
+      </div>
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 bg-purple-50 rounded-lg flex items-center justify-center">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-purple-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="12" x2="15" y2="12"/>
+            </svg>
+          </div>
+          <span class="text-sm font-medium text-slate-600">Bill Payments</span>
+        </div>
+        <div class="text-right">
+          <p class="text-sm font-bold text-slate-800">{{ bill_payments_count }}</p>
+          <p class="text-xs text-slate-400">{{ bill_payments_volume|default:'0.00' }}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Transaction Status -->
+  <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+    <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4">Transaction Status</h3>
+    <div class="space-y-4">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 bg-emerald-50 rounded-lg flex items-center justify-center">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          </div>
+          <span class="text-sm font-medium text-slate-600">Completed</span>
+        </div>
+        <span class="text-sm font-bold text-emerald-600">{{ completed_transactions }}</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 bg-amber-50 rounded-lg flex items-center justify-center">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+          </div>
+          <span class="text-sm font-medium text-slate-600">Pending</span>
+        </div>
+        <span class="text-sm font-bold text-amber-600">{{ pending_transactions }}</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 bg-red-50 rounded-lg flex items-center justify-center">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+            </svg>
+          </div>
+          <span class="text-sm font-medium text-slate-600">Failed</span>
+        </div>
+        <span class="text-sm font-bold text-red-600">{{ failed_transactions }}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick Actions & Alerts -->
+  <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+    <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4">Quick Stats</h3>
+    <div class="space-y-4">
+      <div class="p-4 bg-slate-50 rounded-xl">
+        <p class="text-xs text-slate-500 mb-1">Pending Verifications</p>
+        <div class="flex items-center justify-between">
+          <p class="text-lg font-bold text-slate-800">{{ pending_verifications }}</p>
+          <a href="{% url 'kyc_review' %}" class="text-xs font-medium text-blue-600 hover:text-blue-700">Review →</a>
+        </div>
+      </div>
+      <div class="p-4 bg-slate-50 rounded-xl">
+        <p class="text-xs text-slate-500 mb-1">Verified Users</p>
+        <p class="text-lg font-bold text-slate-800">{{ verified_users }}</p>
+      </div>
+      <div class="p-4 bg-slate-50 rounded-xl">
+        <p class="text-xs text-slate-500 mb-1">Active Users</p>
+        <p class="text-lg font-bold text-slate-800">{{ active_users }}</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Recent Activity Section -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+  <!-- Recent Transactions -->
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-100">
+    <div class="px-6 py-4 border-b border-slate-100">
+      <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wider">Recent Transactions</h3>
+    </div>
+    <div class="divide-y divide-slate-50 max-h-96 overflow-y-auto">
+      {% for tx in recent_transactions %}
+      <div class="flex items-center justify-between px-6 py-4 hover:bg-slate-50 transition-colors">
+        <div class="flex items-center gap-4">
+          <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0
+            {% if tx.transaction_type == 'topup' %}bg-emerald-50
+            {% elif tx.transaction_type == 'transfer' %}bg-blue-50
+            {% elif tx.transaction_type == 'withdrawal' %}bg-red-50
+            {% else %}bg-slate-50{% endif %}">
+            {% if tx.transaction_type == 'topup' %}
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
+            </svg>
+            {% elif tx.transaction_type == 'transfer' %}
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+            {% elif tx.transaction_type == 'withdrawal' %}
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.24 8.24l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.24-8.24l2.83-2.83"/>
+            </svg>
+            {% else %}
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 12l2 2 4-4"/>
+            </svg>
+            {% endif %}
+          </div>
+          <div>
+            <p class="text-sm font-semibold text-slate-700 capitalize">{{ tx.transaction_type }}</p>
+            <p class="text-xs text-slate-400">{{ tx.wallet.user.full_name|default:'Unknown' }}</p>
+          </div>
+        </div>
+        <div class="text-right">
+          <p class="text-sm font-bold text-slate-800">{{ tx.amount }}</p>
+          <span class="text-xs px-2 py-0.5 rounded-full font-medium
+            {% if tx.status == 'completed' %}bg-emerald-50 text-emerald-700
+            {% elif tx.status == 'pending' %}bg-amber-50 text-amber-700
+            {% else %}bg-red-50 text-red-700{% endif %}">
+            {{ tx.status|capfirst }}
+          </span>
+        </div>
+      </div>
+      {% empty %}
+      <div class="flex flex-col items-center justify-center py-12 text-slate-400">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-12 h-12 mb-3 text-slate-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/>
+          <rect x="9" y="3" width="6" height="4" rx="1"/>
+        </svg>
+        <p class="text-sm">No recent transactions</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Recent Transfers -->
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-100">
+    <div class="px-6 py-4 border-b border-slate-100">
+      <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wider">Recent Transfers</h3>
+    </div>
+    <div class="divide-y divide-slate-50 max-h-96 overflow-y-auto">
+      {% for transfer in recent_transfers %}
+      <div class="flex items-center justify-between px-6 py-4 hover:bg-slate-50 transition-colors">
+        <div class="flex items-center gap-4">
+          <div class="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+          </div>
+          <div>
+            <p class="text-sm font-semibold text-slate-700">{{ transfer.sender_wallet.user.full_name }}</p>
+            <p class="text-xs text-slate-400">→ {{ transfer.receiver_wallet.user.full_name }}</p>
+          </div>
+        </div>
+        <div class="text-right">
+          <p class="text-sm font-bold text-slate-800">{{ transfer.transaction.amount }}</p>
+          <p class="text-xs text-slate-400">{{ transfer.transaction.wallet.currency }}</p>
+        </div>
+      </div>
+      {% empty %}
+      <div class="flex flex-col items-center justify-center py-12 text-slate-400">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-12 h-12 mb-3 text-slate-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/>
+          <rect x="9" y="3" width="6" height="4" rx="1"/>
+        </svg>
+        <p class="text-sm">No recent transfers</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<!-- Top Users & Currency Distribution -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+  <!-- Top Users by Volume -->
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-100">
+    <div class="px-6 py-4 border-b border-slate-100">
+      <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wider">Top Users by Transaction Volume</h3>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead class="bg-slate-50">
+          <tr>
+            <th class="px-6 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">User</th>
+            <th class="px-6 py-3 text-right text-xs font-semibold text-slate-600 uppercase tracking-wider">Wallet</th>
+            <th class="px-6 py-3 text-right text-xs font-semibold text-slate-600 uppercase tracking-wider">Total Volume</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-50">
+          {% for wallet in top_users %}
+          <tr class="hover:bg-slate-50 transition-colors">
+            <td class="px-6 py-4">
+              <div class="flex items-center gap-3">
+                <div class="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-xs">
+                  {{ wallet.user.full_name|first|upper }}
+                </div>
+                <div>
+                  <p class="text-sm font-medium text-slate-800">{{ wallet.user.full_name }}</p>
+                  <p class="text-xs text-slate-400">{{ wallet.user.email }}</p>
+                </div>
+              </div>
+            </td>
+            <td class="px-6 py-4 text-right text-sm text-slate-600">{{ wallet.wallet_number }}</td>
+            <td class="px-6 py-4 text-right text-sm font-bold text-slate-800">{{ wallet.total_volume|default:'0.00' }}</td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="3" class="px-6 py-8 text-center text-slate-400">
+              <p class="text-sm">No data available</p>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Currency Distribution -->
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-100">
+    <div class="px-6 py-4 border-b border-slate-100">
+      <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wider">Currency Distribution</h3>
+    </div>
+    <div class="p-6">
+      <canvas id="currencyChart" height="200"></canvas>
+      <div class="mt-4 space-y-2">
+        {% for curr in currency_distribution %}
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <div class="w-3 h-3 rounded-full" style="background-color: {% if curr.currency == 'USD' %}#10b981{% else %}#3b82f6{% endif %}"></div>
+            <span class="text-sm font-medium text-slate-600">{{ curr.currency }}</span>
+          </div>
+          <div class="text-right">
+            <span class="text-sm font-bold text-slate-800">{{ curr.count }}</span>
+            <span class="text-xs text-slate-400">wallets ({{ curr.total_balance|default:'0.00' }})</span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+  // Chart.js Configuration
+  const chartLabels = {{ chart_labels|safe }};
+  const chartCounts = {{ chart_counts }};
+  const chartVolumes = {{ chart_volumes }};
+
+  // Common chart options
+  const commonOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        display: false
+      }
+    },
+    scales: {
+      x: {
+        grid: {
+          display: false
+        },
+        ticks: {
+          font: {
+            size: 10
+          },
+          maxTicksLimit: 10
+        }
+      },
+      y: {
+        beginAtZero: true,
+        grid: {
+          color: '#f1f5f9'
+        },
+        ticks: {
+          font: {
+            size: 10
+          }
+        }
+      }
+    }
+  };
+
+  // Transaction Volume Chart
+  const volumeCtx = document.getElementById('volumeChart').getContext('2d');
+  new Chart(volumeCtx, {
+    type: 'line',
+    data: {
+      labels: chartLabels,
+      datasets: [{
+        label: 'Volume',
+        data: chartVolumes,
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 3,
+        pointBackgroundColor: '#3b82f6',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2
+      }]
+    },
+    options: {
+      ...commonOptions,
+      plugins: {
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              return 'Volume: ' + context.parsed.y.toFixed(2);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // Transaction Count Chart
+  const countCtx = document.getElementById('countChart').getContext('2d');
+  new Chart(countCtx, {
+    type: 'bar',
+    data: {
+      labels: chartLabels,
+      datasets: [{
+        label: 'Count',
+        data: chartCounts,
+        backgroundColor: 'rgba(16, 185, 129, 0.8)',
+        borderRadius: 4,
+        borderSkipped: false
+      }]
+    },
+    options: {
+      ...commonOptions,
+      plugins: {
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              return 'Transactions: ' + context.parsed.y;
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // Currency Distribution Chart
+  const currencyCtx = document.getElementById('currencyChart').getContext('2d');
+  const currencyData = {{ currency_distribution|safe }};
+  const currencyLabels = currencyData.map(c => c.currency);
+  const currencyCounts = currencyData.map(c => c.count);
+  const currencyColors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6'];
+
+  new Chart(currencyCtx, {
+    type: 'doughnut',
+    data: {
+      labels: currencyLabels,
+      datasets: [{
+        data: currencyCounts,
+        backgroundColor: currencyColors,
+        borderWidth: 0,
+        hoverOffset: 4
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: '70%',
+      plugins: {
+        legend: {
+          display: false
+        }
+      }
+    }
+  });
+</script>
+{% endblock %}
