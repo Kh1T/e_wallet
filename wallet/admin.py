@@ -2,7 +2,12 @@ from django.contrib import admin
 from django.utils import timezone
 from django.utils.html import format_html
 from django.conf import settings
-from django.db.models import Sum
+from django.db.models import Sum, Count, Avg, Q
+from django.db.models.functions import TruncDate
+from django.shortcuts import render
+from django.urls import path
+from datetime import datetime, timedelta
+from decimal import Decimal
 
 from .models import (
     IdentityVerification, Notification, Transaction, Transfer, Wallet,
@@ -571,3 +576,176 @@ class TransactionLimitAdmin(admin.ModelAdmin):
     def user_info(self, obj):
         return f"{obj.user.full_name} ({obj.user.email})"
     user_info.short_description = 'User'
+
+
+# ─────────────────────────────────────────────
+#  CUSTOM ADMIN DASHBOARD
+# ─────────────────────────────────────────────
+from django.template.response import TemplateResponse
+
+
+class DashboardAdminSite(admin.AdminSite):
+    """Custom Admin Site with Dashboard."""
+    
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path('dashboard/', self.admin_view(self.dashboard_view), name='admin_dashboard'),
+        ]
+        return custom_urls + urls
+    
+    def index(self, request, extra_context=None):
+        """Override index to redirect to dashboard."""
+        return self.dashboard_view(request)
+    
+    def dashboard_view(self, request):
+        """Admin Dashboard with Statistics and Financial Reports."""
+        # Date ranges
+        today = timezone.now().date()
+        week_start = today - timedelta(days=today.weekday())
+        month_start = today.replace(day=1)
+        year_start = today.replace(month=1, day=1)
+        
+        # ─── USER STATISTICS ───
+        total_users = User.objects.count()
+        new_users_today = User.objects.filter(date_joined__date=today).count()
+        new_users_week = User.objects.filter(date_joined__date__gte=week_start).count()
+        new_users_month = User.objects.filter(date_joined__date__gte=month_start).count()
+        active_users = User.objects.filter(status='active').count()
+        verified_users = IdentityVerification.objects.filter(verification_status='verified').count()
+        pending_verifications = IdentityVerification.objects.filter(verification_status='pending').count()
+        
+        # ─── WALLET STATISTICS ───
+        total_wallets = Wallet.objects.count()
+        active_wallets = Wallet.objects.filter(status='active').count()
+        frozen_wallets = Wallet.objects.filter(status='frozen').count()
+        total_balance = Wallet.objects.aggregate(total=Sum('balance'))['total'] or Decimal('0')
+        avg_wallet_balance = Wallet.objects.filter(status='active').aggregate(avg=Avg('balance'))['avg'] or Decimal('0')
+        
+        # ─── TRANSACTION STATISTICS (Today) ───
+        today_transactions = Transaction.objects.filter(created_at__date=today)
+        today_count = today_transactions.count()
+        today_volume = today_transactions.aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        
+        # ─── TRANSACTION STATISTICS (This Month) ───
+        month_transactions = Transaction.objects.filter(created_at__date__gte=month_start)
+        month_count = month_transactions.count()
+        month_volume = month_transactions.aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        
+        # ─── TRANSACTION BREAKDOWN ───
+        transfers = month_transactions.filter(transaction_type='transfer').aggregate(
+            count=Count('id'), total=Sum('amount')
+        )
+        topups = month_transactions.filter(transaction_type='topup').aggregate(
+            count=Count('id'), total=Sum('amount')
+        )
+        withdrawals = month_transactions.filter(transaction_type='withdrawal').aggregate(
+            count=Count('id'), total=Sum('amount')
+        )
+        bill_payments = month_transactions.filter(transaction_type='bill_payment').aggregate(
+            count=Count('id'), total=Sum('amount')
+        )
+        
+        # ─── STATUS BREAKDOWN ───
+        completed_transactions = month_transactions.filter(status='completed').count()
+        pending_transactions = month_transactions.filter(status='pending').count()
+        failed_transactions = month_transactions.filter(status='failed').count()
+        
+        # ─── RECENT ACTIVITY ───
+        recent_transactions = Transaction.objects.select_related('wallet', 'wallet__user').order_by('-created_at')[:10]
+        recent_transfers = Transfer.objects.select_related(
+            'transaction', 'sender_wallet__user', 'receiver_wallet__user'
+        ).order_by('-created_at')[:10]
+        
+        # ─── DAILY CHART DATA (Last 30 days) ───
+        chart_start = today - timedelta(days=29)
+        daily_data = Transaction.objects.filter(
+            created_at__date__gte=chart_start
+        ).annotate(
+            date=TruncDate('created_at')
+        ).values('date').annotate(
+            count=Count('id'),
+            volume=Sum('amount')
+        ).order_by('date')
+        
+        # Format chart data
+        chart_labels = []
+        chart_counts = []
+        chart_volumes = []
+        
+        for i in range(30):
+            date = chart_start + timedelta(days=i)
+            chart_labels.append(date.strftime('%m/%d'))
+            day_data = next((d for d in daily_data if d['date'] == date), None)
+            chart_counts.append(day_data['count'] if day_data else 0)
+            chart_volumes.append(float(day_data['volume'] or 0) if day_data else 0)
+        
+        # ─── TOP USERS ───
+        top_users = Wallet.objects.annotate(
+            total_volume=Sum('transactions__amount')
+        ).select_related('user').order_by('-total_volume')[:10]
+        
+        # ─── CURRENCY DISTRIBUTION ───
+        currency_distribution = Wallet.objects.values('currency').annotate(
+            count=Count('id'),
+            total_balance=Sum('balance')
+        ).order_by('-count')
+        
+        context = {
+            'title': 'Dashboard',
+            'total_users': total_users,
+            'new_users_today': new_users_today,
+            'new_users_week': new_users_week,
+            'new_users_month': new_users_month,
+            'active_users': active_users,
+            'verified_users': verified_users,
+            'pending_verifications': pending_verifications,
+            
+            'total_wallets': total_wallets,
+            'active_wallets': active_wallets,
+            'frozen_wallets': frozen_wallets,
+            'total_balance': total_balance,
+            'avg_wallet_balance': avg_wallet_balance,
+            
+            'today_count': today_count,
+            'today_volume': today_volume,
+            'month_count': month_count,
+            'month_volume': month_volume,
+            
+            'transfers_count': transfers['count'] or 0,
+            'transfers_volume': transfers['total'] or Decimal('0'),
+            'topups_count': topups['count'] or 0,
+            'topups_volume': topups['total'] or Decimal('0'),
+            'withdrawals_count': withdrawals['count'] or 0,
+            'withdrawals_volume': withdrawals['total'] or Decimal('0'),
+            'bill_payments_count': bill_payments['count'] or 0,
+            'bill_payments_volume': bill_payments['total'] or Decimal('0'),
+            
+            'completed_transactions': completed_transactions,
+            'pending_transactions': pending_transactions,
+            'failed_transactions': failed_transactions,
+            
+            'recent_transactions': recent_transactions,
+            'recent_transfers': recent_transfers,
+            
+            'chart_labels': chart_labels,
+            'chart_counts': chart_counts,
+            'chart_volumes': chart_volumes,
+            
+            'top_users': top_users,
+            'currency_distribution': currency_distribution,
+            
+            'has_permission': self.has_permission(request),
+            'site_title': self.site_title,
+            'site_header': self.site_header,
+        }
+        
+        return TemplateResponse(request, 'admin/dashboard.html', context)
+
+
+# Create custom admin site
+custom_admin_site = DashboardAdminSite(name='admin')
+
+# Re-register all models with custom admin
+for model, admin_class in admin.site._registry.copy().items():
+    custom_admin_site.register(model, admin_class.__class__)

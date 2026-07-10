@@ -1,0 +1,475 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}{{ title }} | {{ site_title }}{% endblock %}
+
+{% block branding %}
+<h1 id="site-name"><a href="{% url 'admin:index' %}">{{ site_header }}</a></h1>
+{% endblock %}
+
+{% block extrastyle %}
+<style>
+  .dashboard-container {
+    padding: 20px;
+  }
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+  }
+  .stat-card {
+    background: #fff;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    border-left: 4px solid #417690;
+  }
+  .stat-card.primary { border-left-color: #417690; }
+  .stat-card.success { border-left-color: #28a745; }
+  .stat-card.warning { border-left-color: #ffc107; }
+  .stat-card.danger { border-left-color: #dc3545; }
+  
+  .stat-card h3 {
+    margin: 0 0 10px 0;
+    font-size: 14px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .stat-value {
+    font-size: 28px;
+    font-weight: bold;
+    color: #333;
+  }
+  .stat-subtext {
+    font-size: 12px;
+    color: #888;
+    margin-top: 5px;
+  }
+  
+  .dashboard-section {
+    background: #fff;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  }
+  .dashboard-section h2 {
+    margin: 0 0 20px 0;
+    font-size: 18px;
+    color: #333;
+    border-bottom: 2px solid #eee;
+    padding-bottom: 10px;
+  }
+  
+  .metrics-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin-bottom: 20px;
+  }
+  .metric-box {
+    background: #f8f9fa;
+    padding: 15px;
+    border-radius: 6px;
+    text-align: center;
+  }
+  .metric-label {
+    font-size: 12px;
+    color: #666;
+    margin-bottom: 5px;
+  }
+  .metric-value {
+    font-size: 20px;
+    font-weight: bold;
+    color: #333;
+  }
+  
+  .charts-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 20px;
+    margin-bottom: 20px;
+  }
+  .chart-box {
+    background: #fff;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    max-height: 200px;
+  }
+  .chart-box h3 {
+    margin: 0 0 10px 0;
+    font-size: 14px;
+    color: #666;
+  }
+  .chart-box canvas {
+    max-height: 150px;
+  }
+  
+  .activity-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .activity-table th,
+  .activity-table td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid #eee;
+  }
+  .activity-table th {
+    font-weight: 600;
+    color: #666;
+    background: #f8f9fa;
+  }
+  .activity-table tr:hover {
+    background: #f8f9fa;
+  }
+  
+  .status-badge {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: bold;
+    text-transform: uppercase;
+  }
+  .status-completed { background: #28a745; color: white; }
+  .status-pending { background: #ffc107; color: #333; }
+  .status-failed { background: #dc3545; color: white; }
+  
+  .currency-pill {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: bold;
+    background: #e9ecef;
+    color: #495057;
+  }
+  
+  .quick-links {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  .quick-link {
+    padding: 10px 20px;
+    background: #417690;
+    color: white;
+    text-decoration: none;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: background 0.2s;
+  }
+  .quick-link:hover {
+    background: #3a6a80;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+  <h1>Platform Dashboard</h1>
+  
+  <!-- Quick Links -->
+  <div class="quick-links">
+    <a href="{% url 'admin:wallet_identityverification_changelist' %}" class="quick-link">
+      Pending KYC ({{ pending_verifications }})
+    </a>
+    <a href="{% url 'admin:wallet_transaction_changelist' %}" class="quick-link">
+      View Transactions
+    </a>
+    <a href="{% url 'admin:wallet_user_changelist' %}" class="quick-link">
+      Manage Users
+    </a>
+    <a href="{% url 'admin:wallet_wallet_changelist' %}" class="quick-link">
+      Manage Wallets
+    </a>
+  </div>
+
+  <!-- Key Stats Cards -->
+  <div class="stats-grid">
+    <div class="stat-card primary">
+      <h3>Total Users</h3>
+      <div class="stat-value">{{ total_users|default:"0" }}</div>
+      <div class="stat-subtext">
+        +{{ new_users_today }} today | +{{ new_users_week }} this week | +{{ new_users_month }} this month
+      </div>
+    </div>
+    
+    <div class="stat-card success">
+      <h3>Total Wallets</h3>
+      <div class="stat-value">{{ total_wallets|default:"0" }}</div>
+      <div class="stat-subtext">{{ active_wallets }} active, {{ frozen_wallets }} frozen</div>
+    </div>
+    
+    <div class="stat-card primary">
+      <h3>Total Platform Balance</h3>
+      <div class="stat-value">{{ total_balance|default:"0.00" }}</div>
+      <div class="stat-subtext">Avg: {{ avg_wallet_balance|default:"0.00" }} per wallet</div>
+    </div>
+    
+    <div class="stat-card warning">
+      <h3>Pending Verifications</h3>
+      <div class="stat-value">{{ pending_verifications|default:"0" }}</div>
+      <div class="stat-subtext">{{ verified_users }} verified users</div>
+    </div>
+  </div>
+
+  <!-- Today's Stats -->
+  <div class="dashboard-section">
+    <h2>Today's Activity</h2>
+    <div class="metrics-row">
+      <div class="metric-box">
+        <div class="metric-label">Transactions</div>
+        <div class="metric-value">{{ today_count|default:"0" }}</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-label">Volume</div>
+        <div class="metric-value">{{ today_volume|default:"0.00" }}</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-label">Active Users</div>
+        <div class="metric-value">{{ active_users|default:"0" }}</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-label">New Users Today</div>
+        <div class="metric-value">{{ new_users_today|default:"0" }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Monthly Transaction Breakdown -->
+  <div class="dashboard-section">
+    <h2>This Month's Transactions ({{ month_count|default:"0" }} total)</h2>
+    <div class="metrics-row">
+      <div class="metric-box" style="border-top: 3px solid #28a745;">
+        <div class="metric-label">Transfers</div>
+        <div class="metric-value">{{ transfers_count|default:"0" }}</div>
+        <div style="font-size: 12px; color: #28a745; margin-top: 5px;">{{ transfers_volume|default:"0.00" }}</div>
+      </div>
+      <div class="metric-box" style="border-top: 3px solid #17a2b8;">
+        <div class="metric-label">Top-ups</div>
+        <div class="metric-value">{{ topups_count|default:"0" }}</div>
+        <div style="font-size: 12px; color: #17a2b8; margin-top: 5px;">{{ topups_volume|default:"0.00" }}</div>
+      </div>
+      <div class="metric-box" style="border-top: 3px solid #dc3545;">
+        <div class="metric-label">Withdrawals</div>
+        <div class="metric-value">{{ withdrawals_count|default:"0" }}</div>
+        <div style="font-size: 12px; color: #dc3545; margin-top: 5px;">{{ withdrawals_volume|default:"0.00" }}</div>
+      </div>
+      <div class="metric-box" style="border-top: 3px solid #6f42c1;">
+        <div class="metric-label">Bill Payments</div>
+        <div class="metric-value">{{ bill_payments_count|default:"0" }}</div>
+        <div style="font-size: 12px; color: #6f42c1; margin-top: 5px;">{{ bill_payments_volume|default:"0.00" }}</div>
+      </div>
+    </div>
+    
+    <h3 style="margin: 20px 0 10px; font-size: 14px; color: #666;">Transaction Status</h3>
+    <div class="metrics-row">
+      <div class="metric-box">
+        <div class="metric-label">Completed</div>
+        <div class="metric-value" style="color: #28a745;">{{ completed_transactions|default:"0" }}</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-label">Pending</div>
+        <div class="metric-value" style="color: #ffc107;">{{ pending_transactions|default:"0" }}</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-label">Failed</div>
+        <div class="metric-value" style="color: #dc3545;">{{ failed_transactions|default:"0" }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="charts-container">
+    <div class="chart-box">
+      <h3>Transaction Volume (Last 30 Days)</h3>
+      <canvas id="volumeChart" height="120"></canvas>
+    </div>
+    <div class="chart-box">
+      <h3>Transaction Count (Last 30 Days)</h3>
+      <canvas id="countChart" height="120"></canvas>
+    </div>
+  </div>
+
+  <!-- Recent Transactions -->
+  <div class="dashboard-section">
+    <h2>Recent Transactions</h2>
+    <table class="activity-table">
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>User</th>
+          <th>Amount</th>
+          <th>Status</th>
+          <th>Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for tx in recent_transactions %}
+        <tr>
+          <td>{{ tx.transaction_type|capfirst }}</td>
+          <td>{{ tx.wallet.user.full_name|default:"Unknown" }}</td>
+          <td><strong>{{ tx.amount }}</strong> <span class="currency-pill">{{ tx.wallet.currency|default:"N/A" }}</span></td>
+          <td><span class="status-badge status-{{ tx.status }}">{{ tx.status|capfirst }}</span></td>
+          <td>{{ tx.created_at|date:"M d, Y H:i" }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="5" style="text-align: center; color: #888;">No recent transactions</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Recent Transfers -->
+  <div class="dashboard-section">
+    <h2>Recent Transfers</h2>
+    <table class="activity-table">
+      <thead>
+        <tr>
+          <th>From</th>
+          <th>To</th>
+          <th>Amount</th>
+          <th>Currency</th>
+          <th>Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for transfer in recent_transfers %}
+        <tr>
+          <td>{{ transfer.sender_wallet.user.full_name|default:"Unknown" }}</td>
+          <td>{{ transfer.receiver_wallet.user.full_name|default:"Unknown" }}</td>
+          <td><strong>{{ transfer.transaction.amount }}</strong></td>
+          <td><span class="currency-pill">{{ transfer.transaction.wallet.currency|default:"N/A" }}</span></td>
+          <td>{{ transfer.created_at|date:"M d, Y H:i" }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="5" style="text-align: center; color: #888;">No recent transfers</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Top Users -->
+  <div class="dashboard-section">
+    <h2>Top Users by Transaction Volume</h2>
+    <table class="activity-table">
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Wallet</th>
+          <th>Balance</th>
+          <th>Total Transaction Volume</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for wallet in top_users %}
+        {% if wallet.total_volume %}
+        <tr>
+          <td>
+            <strong>{{ wallet.user.full_name }}</strong><br>
+            <small style="color: #888;">{{ wallet.user.email }}</small>
+          </td>
+          <td>{{ wallet.wallet_number }}</td>
+          <td>{{ wallet.balance }}</td>
+          <td><strong>{{ wallet.total_volume|default:"0.00" }}</strong></td>
+        </tr>
+        {% endif %}
+        {% empty %}
+        <tr>
+          <td colspan="4" style="text-align: center; color: #888;">No data available</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Currency Distribution -->
+  <div class="dashboard-section">
+    <h2>Currency Distribution</h2>
+    <div class="metrics-row">
+      {% for curr in currency_distribution %}
+      <div class="metric-box">
+        <div class="metric-label">{{ curr.currency }}</div>
+        <div class="metric-value">{{ curr.count }}</div>
+        <div style="font-size: 12px; color: #888; margin-top: 5px;">{{ curr.total_balance|default:"0.00" }} total</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+  // Chart data
+  const chartLabels = {{ chart_labels|safe }};
+  const chartCounts = {{ chart_counts }};
+  const chartVolumes = {{ chart_volumes }};
+
+  // Volume Chart
+  const volumeCtx = document.getElementById('volumeChart').getContext('2d');
+  new Chart(volumeCtx, {
+    type: 'line',
+    data: {
+      labels: chartLabels,
+      datasets: [{
+        label: 'Volume',
+        data: chartVolumes,
+        borderColor: '#417690',
+        backgroundColor: 'rgba(65, 118, 144, 0.1)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 3,
+        pointBackgroundColor: '#417690',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false }
+      },
+      scales: {
+        x: { grid: { display: false } },
+        y: { beginAtZero: true, grid: { color: '#f0f0f0' } }
+      }
+    }
+  });
+
+  // Count Chart
+  const countCtx = document.getElementById('countChart').getContext('2d');
+  new Chart(countCtx, {
+    type: 'bar',
+    data: {
+      labels: chartLabels,
+      datasets: [{
+        label: 'Count',
+        data: chartCounts,
+        backgroundColor: 'rgba(40, 167, 69, 0.8)',
+        borderRadius: 4,
+        borderSkipped: false
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false }
+      },
+      scales: {
+        x: { grid: { display: false } },
+        y: { beginAtZero: true, grid: { color: '#f0f0f0' } }
+      }
+    }
+  });
+</script>
+{% endblock %}
