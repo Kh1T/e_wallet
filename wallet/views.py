@@ -891,6 +891,285 @@ class ProfileView(LoginRequiredMixin, View):
         })
 
 
+class UserReportsView(LoginRequiredMixin, View):
+    """GET /reports/ — View daily, monthly, and annual transaction reports."""
+    login_url = '/login/'
+    template_name = 'wallet/reports.html'
+
+    def get(self, request):
+        wallet = Wallet.objects.filter(user=request.user).first()
+        report_type = request.GET.get('report_type', 'daily')
+        selected_date = request.GET.get('date')
+        selected_month = request.GET.get('month')
+        selected_year = request.GET.get('year')
+
+        from datetime import datetime, timedelta
+        from django.db.models import Sum, Count
+        from django.db.models.functions import TruncDate, TruncMonth, TruncYear
+
+        context = {
+            'wallet': wallet,
+            'report_type': report_type,
+            'active_page': 'reports',
+        }
+
+        if not wallet:
+            context['no_wallet'] = True
+            return render(request, self.template_name, context)
+
+        # Get user's wallet IDs for filtering
+        user_wallet_ids = Wallet.objects.filter(user=request.user).values_list('id', flat=True)
+
+        # Daily Report
+        if report_type == 'daily':
+            if selected_date:
+                try:
+                    report_date = datetime.strptime(selected_date, '%Y-%m-%d').date()
+                except ValueError:
+                    report_date = timezone.now().date()
+            else:
+                report_date = timezone.now().date()
+
+            # Get all transactions for this day (sent from user's wallets + received by user's wallets)
+            sent_transactions = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                created_at__date=report_date
+            ).select_related('wallet', 'merchant', 'biller').order_by('-created_at')
+
+            # Received transfers
+            received_transfers = Transfer.objects.filter(
+                receiver_wallet__in=user_wallet_ids,
+                created_at__date=report_date
+            ).select_related('transaction', 'sender_wallet__user').order_by('-created_at')
+
+            # Calculate totals
+            total_sent = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                transaction_type='transfer',
+                created_at__date=report_date
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+            total_topup = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                transaction_type='topup',
+                created_at__date=report_date
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+            total_received = Transfer.objects.filter(
+                receiver_wallet__in=user_wallet_ids,
+                created_at__date=report_date
+            ).aggregate(total=Sum('transaction__amount'))['total'] or Decimal('0')
+
+            # Count by type
+            transaction_counts = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                created_at__date=report_date
+            ).values('transaction_type').annotate(
+                count=Count('id'),
+                total=Sum('amount')
+            ).order_by('transaction_type')
+
+            context.update({
+                'report_date': report_date,
+                'sent_transactions': sent_transactions,
+                'received_transfers': received_transfers,
+                'total_sent': total_sent,
+                'total_topup': total_topup,
+                'total_received': total_received,
+                'transaction_counts': transaction_counts,
+                'net_flow': total_received + total_topup - total_sent,
+            })
+
+        # Monthly Report
+        elif report_type == 'monthly':
+            if selected_month:
+                try:
+                    report_month = datetime.strptime(selected_month, '%Y-%m').date()
+                except ValueError:
+                    report_month = timezone.now().date().replace(day=1)
+            else:
+                report_month = timezone.now().date().replace(day=1)
+
+            month_start = report_month.replace(day=1)
+            if report_month.month == 12:
+                month_end = report_month.replace(year=report_month.year + 1, month=1, day=1)
+            else:
+                month_end = report_month.replace(month=report_month.month + 1, day=1)
+
+            # Daily breakdown for the month
+            daily_breakdown = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                created_at__date__gte=month_start,
+                created_at__date__lt=month_end
+            ).annotate(
+                day=TruncDate('created_at')
+            ).values('day').annotate(
+                count=Count('id'),
+                total_sent=Sum('amount', filter=Q(transaction_type='transfer')),
+                total_topup=Sum('amount', filter=Q(transaction_type='topup')),
+            ).order_by('day')
+
+            # Received transfers by day
+            received_by_day = Transfer.objects.filter(
+                receiver_wallet__in=user_wallet_ids,
+                created_at__date__gte=month_start,
+                created_at__date__lt=month_end
+            ).annotate(
+                day=TruncDate('created_at')
+            ).values('day').annotate(
+                total_received=Sum('transaction__amount'),
+                count=Count('id')
+            ).order_by('day')
+
+            # Monthly totals
+            monthly_sent = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                transaction_type='transfer',
+                created_at__date__gte=month_start,
+                created_at__date__lt=month_end
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+            monthly_topup = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                transaction_type='topup',
+                created_at__date__gte=month_start,
+                created_at__date__lt=month_end
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+            monthly_received = Transfer.objects.filter(
+                receiver_wallet__in=user_wallet_ids,
+                created_at__date__gte=month_start,
+                created_at__date__lt=month_end
+            ).aggregate(total=Sum('transaction__amount'))['total'] or Decimal('0')
+
+            # Transaction type summary
+            transaction_types = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                created_at__date__gte=month_start,
+                created_at__date__lt=month_end
+            ).values('transaction_type').annotate(
+                count=Count('id'),
+                total=Sum('amount')
+            ).order_by('transaction_type')
+
+            context.update({
+                'report_month': report_month,
+                'daily_breakdown': daily_breakdown,
+                'received_by_day': received_by_day,
+                'monthly_sent': monthly_sent,
+                'monthly_topup': monthly_topup,
+                'monthly_received': monthly_received,
+                'monthly_net': monthly_received + monthly_topup - monthly_sent,
+                'transaction_types': transaction_types,
+            })
+
+        # Annual Report
+        elif report_type == 'annual':
+            if selected_year:
+                try:
+                    report_year = int(selected_year)
+                except ValueError:
+                    report_year = timezone.now().year
+            else:
+                report_year = timezone.now().year
+
+            year_start = datetime(report_year, 1, 1).date()
+            year_end = datetime(report_year + 1, 1, 1).date()
+
+            # Monthly breakdown for the year
+            monthly_breakdown = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                created_at__date__gte=year_start,
+                created_at__date__lt=year_end
+            ).annotate(
+                month=TruncMonth('created_at')
+            ).values('month').annotate(
+                count=Count('id'),
+                total_sent=Sum('amount', filter=Q(transaction_type='transfer')),
+                total_topup=Sum('amount', filter=Q(transaction_type='topup')),
+            ).order_by('month')
+
+            # Received transfers by month
+            received_by_month = Transfer.objects.filter(
+                receiver_wallet__in=user_wallet_ids,
+                created_at__date__gte=year_start,
+                created_at__date__lt=year_end
+            ).annotate(
+                month=TruncMonth('created_at')
+            ).values('month').annotate(
+                total_received=Sum('transaction__amount'),
+                count=Count('id')
+            ).order_by('month')
+
+            # Annual totals
+            annual_sent = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                transaction_type='transfer',
+                created_at__date__gte=year_start,
+                created_at__date__lt=year_end
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+            annual_topup = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                transaction_type='topup',
+                created_at__date__gte=year_start,
+                created_at__date__lt=year_end
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+            annual_received = Transfer.objects.filter(
+                receiver_wallet__in=user_wallet_ids,
+                created_at__date__gte=year_start,
+                created_at__date__lt=year_end
+            ).aggregate(total=Sum('transaction__amount'))['total'] or Decimal('0')
+
+            # Quarter summary
+            quarter_totals = []
+            for q in range(1, 5):
+                q_start = datetime(report_year, (q - 1) * 3 + 1, 1).date()
+                q_end = datetime(report_year, q * 3 + 1 if q < 4 else 1, 1).date() if q < 4 else datetime(report_year + 1, 1, 1).date()
+
+                q_sent = Transaction.objects.filter(
+                    wallet__in=user_wallet_ids,
+                    transaction_type='transfer',
+                    created_at__date__gte=q_start,
+                    created_at__date__lt=q_end
+                ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+                q_topup = Transaction.objects.filter(
+                    wallet__in=user_wallet_ids,
+                    transaction_type='topup',
+                    created_at__date__gte=q_start,
+                    created_at__date__lt=q_end
+                ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+                q_received = Transfer.objects.filter(
+                    receiver_wallet__in=user_wallet_ids,
+                    created_at__date__gte=q_start,
+                    created_at__date__lt=q_end
+                ).aggregate(total=Sum('transaction__amount'))['total'] or Decimal('0')
+
+                quarter_totals.append({
+                    'quarter': f'Q{q}',
+                    'sent': q_sent,
+                    'topup': q_topup,
+                    'received': q_received,
+                    'net': q_received + q_topup - q_sent,
+                })
+
+            context.update({
+                'report_year': report_year,
+                'monthly_breakdown': monthly_breakdown,
+                'received_by_month': received_by_month,
+                'annual_sent': annual_sent,
+                'annual_topup': annual_topup,
+                'annual_received': annual_received,
+                'annual_net': annual_received + annual_topup - annual_sent,
+                'quarter_totals': quarter_totals,
+            })
+
+        return render(request, self.template_name, context)
+
+
 class AdminRequiredMixin(LoginRequiredMixin):
     login_url = '/login/'
 
