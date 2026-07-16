@@ -22,8 +22,125 @@
   {% if request.user.is_authenticated %}
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
   {% endif %}
+  <style>
+    #page-loader {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: grid;
+      place-items: center;
+      color: #0f172a;
+      opacity: 1;
+      visibility: visible;
+      transition: opacity 250ms ease, visibility 250ms ease;
+    }
+    #page-loader.is-hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .loader-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.25rem;
+      min-width: 13rem;
+      padding: 2rem 2.5rem;
+      border: 1px solid #e2e8f0;
+      border-radius: 1.5rem;
+      background: #fff;
+      box-shadow: 0 1.25rem 3rem rgba(15, 23, 42, 0.18);
+    }
+    .loader-mark {
+      position: relative;
+      display: grid;
+      width: 5.5rem;
+      height: 5.5rem;
+      place-items: center;
+    }
+    .loader-wallet {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      width: 3.5rem;
+      height: 3.5rem;
+      place-items: center;
+      border: 1px solid rgba(147, 197, 253, 0.35);
+      border-radius: 1.1rem;
+      background: linear-gradient(145deg, #3b82f6, #1d4ed8);
+      color: #fff;
+      animation: loader-float 1.8s ease-in-out infinite;
+    }
+    .loader-orbit {
+      position: absolute;
+      inset: 0;
+      border: 1px solid rgba(96, 165, 250, 0.28);
+      border-radius: 50%;
+      animation: loader-spin 1.7s linear infinite;
+    }
+    .loader-orbit::before {
+      position: absolute;
+      top: -0.25rem;
+      left: 50%;
+      width: 0.5rem;
+      height: 0.5rem;
+      border-radius: 50%;
+      background: #60a5fa;
+      content: '';
+      transform: translateX(-50%);
+    }
+    .loader-brand {
+      font-size: 1.25rem;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+    }
+    .loader-brand span { color: #60a5fa; }
+    .loader-bar {
+      width: 9rem;
+      height: 0.2rem;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(148, 163, 184, 0.18);
+    }
+    .loader-bar::after {
+      display: block;
+      width: 45%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #2563eb, #60a5fa);
+      content: '';
+      animation: loader-slide 1.15s ease-in-out infinite;
+    }
+    @keyframes loader-spin { to { transform: rotate(360deg); } }
+    @keyframes loader-float {
+      0%, 100% { transform: translateY(0) scale(1); }
+      50% { transform: translateY(-0.35rem) scale(1.03); }
+    }
+    @keyframes loader-slide {
+      from { transform: translateX(-110%); }
+      to { transform: translateX(245%); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .loader-wallet, .loader-orbit, .loader-bar::after { animation: none; }
+    }
+  </style>
 </head>
 <body class="h-full bg-slate-50 font-sans antialiased">
+
+  <div id="page-loader" role="status" aria-live="polite" aria-label="Loading NexusPay">
+    <div class="loader-content">
+      <div class="loader-mark" aria-hidden="true">
+        <div class="loader-orbit"></div>
+        <div class="loader-wallet">
+          <svg xmlns="http://www.w3.org/2000/svg" width="29" height="29" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>
+          </svg>
+        </div>
+      </div>
+      <div class="loader-brand">Nexus<span>Pay</span></div>
+      <div class="loader-bar" aria-hidden="true"></div>
+    </div>
+  </div>
 
   <div class="flex h-full min-h-screen" id="app-layout">
 
@@ -310,6 +427,37 @@
       }
     }
   </style>
+
+  <script>
+    (() => {
+      const loader = document.getElementById('page-loader');
+      if (!loader) return;
+
+      const hideLoader = () => loader.classList.add('is-hidden');
+      const showLoader = () => loader.classList.remove('is-hidden');
+
+      // Keep the opening animation visible briefly, then reveal the application.
+      window.setTimeout(hideLoader, 550);
+      window.addEventListener('pageshow', () => window.setTimeout(hideLoader, 100));
+
+      document.addEventListener('click', (event) => {
+        const link = event.target.closest('a[href]');
+        if (!link || event.defaultPrevented || event.button !== 0) return;
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        if (link.target === '_blank' || link.hasAttribute('download') || link.dataset.noLoader !== undefined) return;
+
+        const destination = new URL(link.href, window.location.href);
+        const isSamePageAnchor = destination.pathname === window.location.pathname
+          && destination.search === window.location.search
+          && destination.hash;
+        if (destination.origin === window.location.origin && !isSamePageAnchor) showLoader();
+      });
+
+      document.addEventListener('submit', (event) => {
+        if (!event.defaultPrevented && event.target.dataset.noLoader === undefined) showLoader();
+      });
+    })();
+  </script>
 
   <script>
     (function() {
