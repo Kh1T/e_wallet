@@ -337,7 +337,7 @@
           <div class="bg-blue-600 px-5 py-3 text-center text-xl font-extrabold tracking-wide">NEXUS<span class="text-white/80">QR</span></div>
           <div class="border-b border-dashed border-slate-400/70 px-6 py-4">
             <p class="text-sm font-bold uppercase text-slate-200">{{ request.user.full_name }}</p>
-            <p id="qrAmountDisplay" class="mt-1 text-3xl font-light">0 <span class="text-base text-slate-400">{{ receive_wallet.currency }}</span></p>
+            <p id="qrAmountDisplay" class="mt-1 hidden text-3xl font-light">0 <span class="text-base text-slate-400">{{ receive_wallet.currency }}</span></p>
             <p class="mt-1 text-xs text-slate-400">{{ receive_wallet.wallet_number }}</p>
           </div>
           <div class="p-6">
@@ -356,7 +356,10 @@
           </label>
           <label class="block">
             <span class="mb-2 block text-xs font-semibold uppercase text-slate-400">Amount</span>
-            <input id="receiveAmount" type="number" min="0" step="0.01" inputmode="decimal" value="0" class="h-12 w-full rounded-lg border border-slate-700 bg-slate-800 px-4 text-base font-semibold text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20" autocomplete="off">
+            <button type="button" id="receiveAmountBtn" class="h-12 w-full rounded-lg border border-slate-700 bg-slate-800 px-4 text-base font-semibold text-white outline-none transition hover:border-cyan-400 hover:text-cyan-400 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20">
+              Amount
+            </button>
+            <input id="receiveAmount" type="number" min="0" step="0.01" inputmode="decimal" value="0" class="hidden h-12 w-full rounded-lg border border-slate-700 bg-slate-800 px-4 text-base font-semibold text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20" autocomplete="off">
           </label>
         </div>
         <p id="receiveAmountError" class="mt-2 hidden text-sm text-red-400" role="alert">Amount cannot be negative.</p>
@@ -499,6 +502,7 @@
 
       const closeButton = document.getElementById('closeReceiveQr');
       const amountInput = document.getElementById('receiveAmount');
+      const amountBtn = document.getElementById('receiveAmountBtn');
       const currencyInput = document.getElementById('receiveCurrency');
       const amountDisplay = document.getElementById('qrAmountDisplay');
       const qrContainer = document.getElementById('receiveQrCode');
@@ -513,6 +517,15 @@
         modal.classList.remove('flex');
         document.body.classList.remove('overflow-hidden');
         openButton.focus();
+        // Reset to initial state
+        if (amountBtn && amountInput) {
+          amountBtn.classList.remove('hidden');
+          amountInput.classList.add('hidden');
+          amountInput.value = '0';
+        }
+        if (amountDisplay) {
+          amountDisplay.classList.add('hidden');
+        }
       };
 
       const renderQr = () => {
@@ -573,7 +586,8 @@
         modal.classList.add('flex');
         document.body.classList.add('overflow-hidden');
         renderQr();
-        window.setTimeout(() => amountInput.focus(), 50);
+        // Focus on Amount button since input starts hidden
+        window.setTimeout(() => amountBtn.focus(), 50);
       });
       closeButton.addEventListener('click', closeModal);
       modal.addEventListener('click', (event) => {
@@ -586,6 +600,17 @@
         window.clearTimeout(renderTimer);
         renderTimer = window.setTimeout(renderQr, 120);
       });
+
+      // Toggle amount button to input and show amount display
+      if (amountBtn) {
+        amountBtn.addEventListener('click', () => {
+          amountBtn.classList.add('hidden');
+          amountInput.classList.remove('hidden');
+          amountDisplay.classList.remove('hidden');
+          amountInput.focus();
+        });
+      }
+
       currencyInput.addEventListener('change', renderQr);
       downloadButton.addEventListener('click', () => {
         const qrCanvas = qrContainer.querySelector('canvas');
