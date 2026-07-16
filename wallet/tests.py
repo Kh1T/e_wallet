@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.test import TestCase
 from django.urls import reverse
 
-from .models import Topup, Transaction, User, Wallet, IdentityVerification
+from .models import Topup, Transaction, Transfer, Transfer, User, Wallet, IdentityVerification
 
 
 class TopupViewTests(TestCase):
@@ -33,7 +33,12 @@ class TopupViewTests(TestCase):
             'submission_token': submission_token,
         })
 
-        self.assertRedirects(response, reverse('dashboard'))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], reverse('dashboard'))
+        self.assertEqual(
+            self.client.session['topup_success_speech'],
+            'ការបញ្ចូលលុយបានជោគជ័យ ចំនួន 50000 KHR!',
+        )
         self.wallet.refresh_from_db()
         self.assertEqual(self.wallet.balance, Decimal('60000.00'))
 
@@ -45,6 +50,18 @@ class TopupViewTests(TestCase):
         topup = Topup.objects.get(transaction=tx)
         self.assertEqual(topup.payment_method, 'aba_mobile')
         self.assertEqual(topup.provider, 'ABA Mobile')
+
+    def test_dashboard_consumes_topup_speech_message(self):
+        self.client.login(username='sophea@example.com', password='StrongPass123')
+        session = self.client.session
+        session['topup_success_speech'] = 'ការបញ្ចូលលុយបានជោគជ័យ ចំនួន 50000 KHR!'
+        session.save()
+
+        response = self.client.get(reverse('dashboard'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'ការបញ្ចូលលុយបានជោគជ័យ ចំនួន 50000 KHR!')
+        self.assertNotIn('topup_success_speech', self.client.session)
 
     def test_topup_rejects_amount_below_minimum(self):
         self.client.login(username='sophea@example.com', password='StrongPass123')
@@ -76,6 +93,107 @@ class TopupViewTests(TestCase):
         self.assertRedirects(first_response, reverse('dashboard'))
         self.assertRedirects(second_response, reverse('topup'))
         self.assertEqual(Transaction.objects.count(), 1)
+
+
+class ReceiveQrTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='qr@example.com',
+            email='qr@example.com',
+            password='StrongPass123',
+            full_name='QR Receiver',
+            phone='010203040',
+        )
+        self.wallet = Wallet.objects.create(
+            user=self.user,
+            wallet_number='011 082 544',
+            balance=Decimal('5000.00'),
+            currency='KHR',
+        )
+
+    def test_authenticated_wallet_owner_sees_receive_qr_controls(self):
+        self.client.login(username='qr@example.com', password='StrongPass123')
+
+        response = self.client.get(reverse('dashboard'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="openReceiveQr"')
+        self.assertContains(response, 'id="receiveQrModal"')
+        self.assertContains(response, 'min="0"')
+        self.assertContains(response, 'value="0"')
+        self.assertContains(response, 'QR Receiver')
+        self.assertContains(response, '011 082 544')
+
+    def test_receive_qr_button_is_hidden_without_a_wallet(self):
+        self.wallet.delete()
+        self.client.login(username='qr@example.com', password='StrongPass123')
+
+        response = self.client.get(reverse('dashboard'))
+
+        self.assertNotContains(response, 'id="openReceiveQr"')
+
+
+class TransactionListViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='dara@example.com',
+            email='dara@example.com',
+            password='StrongPass123',
+            full_name='Dara Sok',
+            phone='098765432',
+        )
+        self.wallet = Wallet.objects.create(
+            user=self.user,
+            wallet_number='WAL-DARA123',
+            balance=Decimal('75000.00'),
+            currency='KHR',
+        )
+
+        self.sender = User.objects.create_user(
+            username='mina@example.com',
+            email='mina@example.com',
+            password='StrongPass123',
+            full_name='Mina Chan',
+            phone='011223344',
+        )
+        self.sender_wallet = Wallet.objects.create(
+            user=self.sender,
+            wallet_number='WAL-MINA123',
+            balance=Decimal('25000.00'),
+            currency='KHR',
+        )
+
+    def test_transactions_page_renders_wallet_activity(self):
+        self.client.login(username='dara@example.com', password='StrongPass123')
+
+        Transaction.objects.create(
+            wallet=self.wallet,
+            transaction_type='topup',
+            amount=Decimal('50000'),
+            status='completed',
+            description='Top-up via ABA Mobile',
+            reference='TOP-TEST123',
+        )
+        incoming_tx = Transaction.objects.create(
+            wallet=self.sender_wallet,
+            transaction_type='transfer',
+            amount=Decimal('10000'),
+            status='completed',
+            description='Lunch',
+            reference='TRF-TEST123',
+        )
+        Transfer.objects.create(
+            transaction=incoming_tx,
+            sender_wallet=self.sender_wallet,
+            receiver_wallet=self.wallet,
+        )
+
+        response = self.client.get(reverse('transactions'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Top-up via ABA Mobile')
+        self.assertContains(response, 'Received from Mina Chan')
+        self.assertContains(response, 'TRF-TEST123')
 
 
 class WalletManagementViewTests(TestCase):
@@ -183,3 +301,66 @@ class CreateWalletViewTests(TestCase):
 
         self.assertRedirects(response, reverse('dashboard'))
         self.assertEqual(Wallet.objects.filter(user=self.user).count(), 2)
+
+
+class TransactionListViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='dara@example.com',
+            email='dara@example.com',
+            password='StrongPass123',
+            full_name='Dara Sok',
+            phone='098765432',
+        )
+        self.wallet = Wallet.objects.create(
+            user=self.user,
+            wallet_number='WAL-DARA123',
+            balance=Decimal('75000.00'),
+            currency='KHR',
+        )
+
+        self.sender = User.objects.create_user(
+            username='mina@example.com',
+            email='mina@example.com',
+            password='StrongPass123',
+            full_name='Mina Chan',
+            phone='011223344',
+        )
+        self.sender_wallet = Wallet.objects.create(
+            user=self.sender,
+            wallet_number='WAL-MINA123',
+            balance=Decimal('25000.00'),
+            currency='KHR',
+        )
+
+    def test_transactions_page_renders_wallet_activity(self):
+        self.client.login(username='dara@example.com', password='StrongPass123')
+
+        Transaction.objects.create(
+            wallet=self.wallet,
+            transaction_type='topup',
+            amount=Decimal('50000'),
+            status='completed',
+            description='Top-up via ABA Mobile',
+            reference='TOP-TEST123',
+        )
+        incoming_tx = Transaction.objects.create(
+            wallet=self.sender_wallet,
+            transaction_type='transfer',
+            amount=Decimal('10000'),
+            status='completed',
+            description='Lunch',
+            reference='TRF-TEST123',
+        )
+        Transfer.objects.create(
+            transaction=incoming_tx,
+            sender_wallet=self.sender_wallet,
+            receiver_wallet=self.wallet,
+        )
+
+        response = self.client.get(reverse('transactions'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Top-up via ABA Mobile')
+        self.assertContains(response, 'Received from Mina Chan')
+        self.assertContains(response, 'TRF-TEST123')

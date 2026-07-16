@@ -38,7 +38,7 @@
                 {{ submission.verification_status|capfirst }}
               </span>
             </div>
-            <p class="text-xs text-slate-400 mt-1">{{ submission.created_at|date:'M d, Y H:i' }}</p>
+            <p class="text-xs text-slate-400 mt-1">{{ submission.created_at|date:'M d, Y g:i A' }}</p>
           </a>
           {% empty %}
           <div class="px-4 py-8 text-center text-slate-400">
@@ -89,7 +89,7 @@
             </div>
             <div class="bg-slate-50 rounded-xl p-4">
               <p class="text-xs text-slate-500 uppercase tracking-wider">Submitted</p>
-              <p class="font-semibold text-slate-800">{{ selected_submission.created_at|date:'M d, Y H:i' }}</p>
+              <p class="font-semibold text-slate-800">{{ selected_submission.created_at|date:'M d, Y g:i A' }}</p>
             </div>
           </div>
 
@@ -173,7 +173,7 @@
               </div>
               <div>
                 <p class="font-semibold text-emerald-800">Verified</p>
-                <p class="text-sm text-emerald-600">Approved on {{ selected_submission.verified_at|date:'M d, Y H:i' }}</p>
+                <p class="text-sm text-emerald-600">Approved on {{ selected_submission.verified_at|date:'M d, Y g:i A' }}</p>
               </div>
             </div>
           </div>
