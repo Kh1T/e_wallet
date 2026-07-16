@@ -19,6 +19,9 @@
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  {% if request.user.is_authenticated %}
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
+  {% endif %}
 </head>
 <body class="h-full bg-slate-50 font-sans antialiased">
 
@@ -148,9 +151,19 @@
           </button>
           <h1 class="text-xl font-bold text-slate-800">{% block page_title %}Dashboard{% endblock %}</h1>
         </div>
-        <div class="flex items-center gap-4">
+        <div class="flex items-center gap-1 sm:gap-2">
+          {% if request.user.is_authenticated %}
+          {% with receive_wallet=request.user.wallets.first %}
+          {% if receive_wallet %}
+          <!-- Receive by QR -->
+          <button type="button" id="openReceiveQr" class="relative p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all" title="Receive by QR" aria-label="Generate receive QR code">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M16 16h.01M19 16h2v2M16 21h2M21 21v.01M12 7v3a2 2 0 0 1-2 2H7M3 12h.01M12 3h.01M12 16v.01M16 12h1M21 12v.01M12 21v-1"/></svg>
+          </button>
+          {% endif %}
+          {% endwith %}
+          {% endif %}
           <!-- Notifications -->
-          <a href="#" class="relative p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all">
+          <a href="#" class="relative p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all" title="Notifications" aria-label="Notifications">
             <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
             {% if unread_count %}
             <span class="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-content-center">{{ unread_count }}</span>
@@ -185,6 +198,64 @@
     </div>
 
   </div>
+
+  {% if request.user.is_authenticated %}
+  {% with receive_wallet=request.user.wallets.first %}
+  {% if receive_wallet %}
+  <!-- Receive QR Dialog -->
+  <div id="receiveQrModal" class="fixed inset-0 z-[70] hidden items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="receiveQrTitle">
+    <div class="relative flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-lg bg-slate-900 text-white shadow-2xl">
+      <div class="flex items-start justify-between px-5 pb-4 pt-5">
+        <div>
+          <h2 id="receiveQrTitle" class="text-xl font-bold">Receive money</h2>
+          <p class="mt-1 text-sm text-slate-400">Enter an amount to generate your QR code.</p>
+        </div>
+        <button type="button" id="closeReceiveQr" class="ml-4 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-white/10 text-slate-300 transition hover:bg-white/20 hover:text-white" aria-label="Close receive QR">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <div class="overflow-y-auto px-5 pb-5">
+        <section class="overflow-hidden rounded-lg bg-[#10212d] shadow-xl" aria-label="Receiver QR card">
+          <div class="bg-blue-600 px-5 py-3 text-center text-xl font-extrabold tracking-wide">NEXUS<span class="text-white/80">QR</span></div>
+          <div class="border-b border-dashed border-slate-400/70 px-6 py-4">
+            <p class="text-sm font-bold uppercase text-slate-200">{{ request.user.full_name }}</p>
+            <p id="qrAmountDisplay" class="mt-1 text-3xl font-light">0 <span class="text-base text-slate-400">{{ receive_wallet.currency }}</span></p>
+            <p class="mt-1 text-xs text-slate-400">{{ receive_wallet.wallet_number }}</p>
+          </div>
+          <div class="p-6">
+            <div id="receiveQrCode" class="mx-auto flex aspect-square w-full max-w-[280px] items-center justify-center rounded-lg bg-white p-3">
+              <div id="qrPlaceholder" class="px-8 text-center text-sm font-medium text-slate-400">Your QR code will appear here</div>
+            </div>
+          </div>
+        </section>
+
+        <div class="mt-5 grid grid-cols-[112px_1fr] gap-3">
+          <label class="block">
+            <span class="mb-2 block text-xs font-semibold uppercase text-slate-400">Currency</span>
+            <select id="receiveCurrency" class="h-12 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 text-sm font-bold text-white outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20">
+              <option value="{{ receive_wallet.currency }}">{{ receive_wallet.currency }}</option>
+            </select>
+          </label>
+          <label class="block">
+            <span class="mb-2 block text-xs font-semibold uppercase text-slate-400">Amount</span>
+            <input id="receiveAmount" type="number" min="0" step="0.01" inputmode="decimal" value="0" class="h-12 w-full rounded-lg border border-slate-700 bg-slate-800 px-4 text-base font-semibold text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20" autocomplete="off">
+          </label>
+        </div>
+        <p id="receiveAmountError" class="mt-2 hidden text-sm text-red-400" role="alert">Amount cannot be negative.</p>
+
+        <button type="button" id="downloadReceiveQr" disabled class="mt-4 inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-cyan-500 px-4 text-sm font-bold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-500">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          Download QR
+        </button>
+      </div>
+    </div>
+  </div>
+  {{ request.user.full_name|json_script:"receive-user-name" }}
+  {{ receive_wallet.wallet_number|json_script:"receive-wallet-number" }}
+  {% endif %}
+  {% endwith %}
+  {% endif %}
 
   <style>
     /* Sidebar Collapsed State */
@@ -271,6 +342,177 @@
       }
     })();
   </script>
+  {% if request.user.is_authenticated %}
+  <script>
+    (() => {
+      const openButton = document.getElementById('openReceiveQr');
+      const modal = document.getElementById('receiveQrModal');
+      if (!openButton || !modal) return;
+
+      const closeButton = document.getElementById('closeReceiveQr');
+      const amountInput = document.getElementById('receiveAmount');
+      const currencyInput = document.getElementById('receiveCurrency');
+      const amountDisplay = document.getElementById('qrAmountDisplay');
+      const qrContainer = document.getElementById('receiveQrCode');
+      const error = document.getElementById('receiveAmountError');
+      const downloadButton = document.getElementById('downloadReceiveQr');
+      const receiverName = JSON.parse(document.getElementById('receive-user-name').textContent);
+      const walletNumber = JSON.parse(document.getElementById('receive-wallet-number').textContent);
+      let renderTimer;
+
+      const closeModal = () => {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        document.body.classList.remove('overflow-hidden');
+        openButton.focus();
+      };
+
+      const renderQr = () => {
+        const rawAmount = amountInput.value.trim();
+        const amount = Number(rawAmount);
+        const currency = currencyInput.value;
+        qrContainer.replaceChildren();
+
+        if (rawAmount === '' || !Number.isFinite(amount) || amount < 0) {
+          const placeholder = document.createElement('div');
+          placeholder.id = 'qrPlaceholder';
+          placeholder.className = 'px-8 text-center text-sm font-medium text-slate-400';
+          placeholder.textContent = 'Your QR code will appear here';
+          qrContainer.appendChild(placeholder);
+          amountDisplay.innerHTML = `0 <span class="text-base text-slate-400">${currency}</span>`;
+          error.classList.toggle('hidden', rawAmount === '');
+          downloadButton.disabled = true;
+          return;
+        }
+
+        const formattedAmount = amount.toFixed(2);
+        amountDisplay.innerHTML = `${formattedAmount} <span class="text-base text-slate-400">${currency}</span>`;
+        error.classList.add('hidden');
+
+        if (typeof QRCode === 'undefined') {
+          const failure = document.createElement('p');
+          failure.className = 'px-6 text-center text-sm font-medium text-red-500';
+          failure.textContent = 'QR generator could not load. Check your connection and try again.';
+          qrContainer.appendChild(failure);
+          downloadButton.disabled = true;
+          return;
+        }
+
+        const payload = JSON.stringify({
+          type: 'NEXUSPAY_RECEIVE',
+          version: 1,
+          receiver: receiverName,
+          wallet: walletNumber,
+          currency,
+          amount: formattedAmount,
+        });
+        const qrSize = Math.min(256, Math.max(160, qrContainer.clientWidth - 24));
+        new QRCode(qrContainer, {
+          text: payload,
+          width: qrSize,
+          height: qrSize,
+          colorDark: '#020617',
+          colorLight: '#ffffff',
+          correctLevel: QRCode.CorrectLevel.H,
+        });
+        const qrImage = qrContainer.querySelector('img');
+        if (qrImage) qrImage.alt = `Receive ${formattedAmount} ${currency} QR code`;
+        downloadButton.disabled = false;
+      };
+
+      openButton.addEventListener('click', () => {
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        document.body.classList.add('overflow-hidden');
+        renderQr();
+        window.setTimeout(() => amountInput.focus(), 50);
+      });
+      closeButton.addEventListener('click', closeModal);
+      modal.addEventListener('click', (event) => {
+        if (event.target === modal) closeModal();
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !modal.classList.contains('hidden')) closeModal();
+      });
+      amountInput.addEventListener('input', () => {
+        window.clearTimeout(renderTimer);
+        renderTimer = window.setTimeout(renderQr, 120);
+      });
+      currencyInput.addEventListener('change', renderQr);
+      downloadButton.addEventListener('click', () => {
+        const qrCanvas = qrContainer.querySelector('canvas');
+        const qrImage = qrContainer.querySelector('img');
+        const qrSource = qrCanvas || qrImage;
+        if (!qrSource) return;
+
+        // Build a complete, shareable payment card instead of saving only the QR square.
+        const card = document.createElement('canvas');
+        card.width = 816;
+        card.height = 986;
+        const context = card.getContext('2d');
+        const amount = Number(amountInput.value).toFixed(2);
+        const currency = currencyInput.value;
+
+        const roundedRectangle = (x, y, width, height, radius) => {
+          context.beginPath();
+          context.roundRect(x, y, width, height, radius);
+        };
+
+        context.save();
+        roundedRectangle(0, 0, card.width, card.height, 18);
+        context.clip();
+
+        context.fillStyle = '#10212d';
+        context.fillRect(0, 0, card.width, card.height);
+        context.fillStyle = '#2563eb';
+        context.fillRect(0, 0, card.width, 104);
+
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillStyle = '#ffffff';
+        context.font = '800 40px Arial, sans-serif';
+        context.fillText('NEXUSQR', card.width / 2, 53);
+
+        context.textAlign = 'left';
+        context.fillStyle = '#e2e8f0';
+        context.font = '700 29px Arial, sans-serif';
+        context.fillText(receiverName.toUpperCase(), 48, 158);
+
+        context.fillStyle = '#f8fafc';
+        context.font = '300 62px Arial, sans-serif';
+        context.fillText(amount, 48, 226);
+        const amountWidth = context.measureText(amount).width;
+        context.fillStyle = '#94a3b8';
+        context.font = '300 32px Arial, sans-serif';
+        context.fillText(currency, 68 + amountWidth, 235);
+
+        context.font = '400 25px Arial, sans-serif';
+        context.fillText(walletNumber, 48, 282);
+
+        context.strokeStyle = '#94a3b8';
+        context.lineWidth = 2;
+        context.setLineDash([7, 5]);
+        context.beginPath();
+        context.moveTo(0, 329);
+        context.lineTo(card.width, 329);
+        context.stroke();
+        context.setLineDash([]);
+
+        roundedRectangle(128, 378, 560, 560, 16);
+        context.fillStyle = '#ffffff';
+        context.fill();
+        context.imageSmoothingEnabled = false;
+        context.drawImage(qrSource, 152, 402, 512, 512);
+        context.restore();
+
+        const link = document.createElement('a');
+        link.href = card.toDataURL('image/png');
+        link.download = `nexuspay-${currencyInput.value}-${Number(amountInput.value).toFixed(2)}.png`;
+        link.click();
+      });
+    })();
+  </script>
+  {% endif %}
   {% block extra_js %}{% endblock %}
 </body>
 </html>

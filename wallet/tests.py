@@ -95,6 +95,44 @@ class TopupViewTests(TestCase):
         self.assertEqual(Transaction.objects.count(), 1)
 
 
+class ReceiveQrTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='qr@example.com',
+            email='qr@example.com',
+            password='StrongPass123',
+            full_name='QR Receiver',
+            phone='010203040',
+        )
+        self.wallet = Wallet.objects.create(
+            user=self.user,
+            wallet_number='011 082 544',
+            balance=Decimal('5000.00'),
+            currency='KHR',
+        )
+
+    def test_authenticated_wallet_owner_sees_receive_qr_controls(self):
+        self.client.login(username='qr@example.com', password='StrongPass123')
+
+        response = self.client.get(reverse('dashboard'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="openReceiveQr"')
+        self.assertContains(response, 'id="receiveQrModal"')
+        self.assertContains(response, 'min="0"')
+        self.assertContains(response, 'value="0"')
+        self.assertContains(response, 'QR Receiver')
+        self.assertContains(response, '011 082 544')
+
+    def test_receive_qr_button_is_hidden_without_a_wallet(self):
+        self.wallet.delete()
+        self.client.login(username='qr@example.com', password='StrongPass123')
+
+        response = self.client.get(reverse('dashboard'))
+
+        self.assertNotContains(response, 'id="openReceiveQr"')
+
+
 class TransactionListViewTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(
