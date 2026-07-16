@@ -280,10 +280,10 @@
           {% endwith %}
           {% endif %}
           <!-- Notifications -->
-          <a href="#" class="relative p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all" title="Notifications" aria-label="Notifications">
+          <a href="{% url 'notifications' %}" class="relative p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all {% if active_page == 'notifications' %}text-blue-600 bg-blue-50{% endif %}" title="Notifications" aria-label="Notifications">
             <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
             {% if unread_count %}
-            <span class="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-content-center">{{ unread_count }}</span>
+            <span class="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-medium">{{ unread_count }}</span>
             {% endif %}
           </a>
         </div>
