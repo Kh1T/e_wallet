@@ -33,22 +33,29 @@
     </div>
     {% endif %}
 
-    <form method="post" class="space-y-5" {% if not kyc_verified %}onsubmit="return false;"{% endif %}>
+    <button type="button" id="openQrScanner"
+            class="mb-6 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-bold text-blue-700 transition hover:border-blue-300 hover:bg-blue-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+            {% if not kyc_verified %}disabled{% endif %}>
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3M7 8h3v3H7zM14 8h3v3h-3zM7 14h3v3H7zM14 14h1v1M17 14v3h-3"/></svg>
+      Send by QR Code
+    </button>
+
+    <form method="post" id="sendMoneyForm" class="space-y-5" {% if not kyc_verified %}onsubmit="return false;"{% endif %}>
       {% csrf_token %}
 
       <div>
         <label class="block text-sm font-semibold text-slate-700 mb-2">Recipient Wallet Number</label>
-        <input type="text" name="recipient_wallet" value="{{ form.recipient_wallet.value|default:'' }}"
-               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified %}bg-slate-100 cursor-not-allowed{% endif %}"
-               {% if not kyc_verified %}disabled{% endif %}>
+        <input type="text" id="recipientWallet" name="recipient_wallet" value="{{ form.recipient_wallet.value|default:'' }}"
+                class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified %}bg-slate-100 cursor-not-allowed{% endif %}"
+                {% if not kyc_verified %}disabled{% endif %}>
         {% if form.recipient_wallet.errors %}<p class="text-red-500 text-xs mt-1">{{ form.recipient_wallet.errors.0 }}</p>{% endif %}
       </div>
 
       <div>
         <label class="block text-sm font-semibold text-slate-700 mb-2">Amount (KHR)</label>
-        <input type="number" name="amount" value="{{ form.amount.value|default:'' }}" step="0.01" min="0.01"
-               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified %}bg-slate-100 cursor-not-allowed{% endif %}"
-               {% if not kyc_verified %}disabled{% endif %}>
+        <input type="number" id="sendAmount" name="amount" value="{{ form.amount.value|default:'' }}" step="0.01" min="0.01"
+                class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified %}bg-slate-100 cursor-not-allowed{% endif %}"
+                {% if not kyc_verified %}disabled{% endif %}>
         {% if form.amount.errors %}<p class="text-red-500 text-xs mt-1">{{ form.amount.errors.0 }}</p>{% endif %}
       </div>
 
@@ -71,4 +78,234 @@
     <a href="{% url 'dashboard' %}" class="text-sm text-slate-500 hover:text-slate-700 transition">← Back to Dashboard</a>
   </div>
 </div>
+
+{% if kyc_verified %}
+<div id="qrScannerModal" class="fixed inset-0 z-[80] hidden items-center justify-center bg-slate-950/70 p-4" role="dialog" aria-modal="true" aria-labelledby="qrScannerTitle">
+  <div class="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl">
+    <div class="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+      <div>
+        <h2 id="qrScannerTitle" class="text-lg font-bold text-slate-900">Send by QR Code</h2>
+        <p class="mt-0.5 text-xs text-slate-500">Scan or import a NexusPay QR code</p>
+      </div>
+      <button type="button" id="closeQrScanner" class="grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-slate-500 transition hover:bg-slate-200 hover:text-slate-800" aria-label="Close QR scanner">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 6-12 12M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <div class="p-5">
+      <div class="grid grid-cols-2 gap-3">
+        <button type="button" id="startQrCamera" class="flex flex-col items-center gap-2 rounded-xl border-2 border-blue-500 bg-blue-50 p-4 text-sm font-bold text-blue-700 transition hover:bg-blue-100">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/></svg>
+          Open Camera
+        </button>
+        <label class="flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+          Import PNG
+          <input id="qrImageUpload" type="file" accept="image/png,image/jpeg,image/webp" class="sr-only">
+        </label>
+      </div>
+
+      <div id="cameraPanel" class="relative mt-4 hidden aspect-square overflow-hidden rounded-xl bg-slate-950">
+        <video id="qrCamera" class="h-full w-full object-cover" autoplay playsinline muted></video>
+        <div class="pointer-events-none absolute inset-[15%] rounded-2xl border-2 border-white shadow-[0_0_0_999px_rgba(2,6,23,0.45)]">
+          <span class="absolute -left-0.5 -top-0.5 h-8 w-8 rounded-tl-xl border-l-4 border-t-4 border-blue-400"></span>
+          <span class="absolute -right-0.5 -top-0.5 h-8 w-8 rounded-tr-xl border-r-4 border-t-4 border-blue-400"></span>
+          <span class="absolute -bottom-0.5 -left-0.5 h-8 w-8 rounded-bl-xl border-b-4 border-l-4 border-blue-400"></span>
+          <span class="absolute -bottom-0.5 -right-0.5 h-8 w-8 rounded-br-xl border-b-4 border-r-4 border-blue-400"></span>
+        </div>
+      </div>
+      <label id="iphoneCameraFallback" class="mt-4 hidden cursor-pointer items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/></svg>
+        Use iPhone Camera
+        <input id="qrCameraCapture" type="file" accept="image/*" capture="environment" class="sr-only">
+      </label>
+      <canvas id="qrScanCanvas" class="hidden"></canvas>
+      <p id="qrScannerStatus" class="mt-4 text-center text-sm text-slate-500" role="status">Choose camera or import a QR image.</p>
+    </div>
+  </div>
+</div>
+{{ wallet.currency|json_script:"sender-wallet-currency" }}
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if kyc_verified %}
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+<script>
+  (() => {
+    const openButton = document.getElementById('openQrScanner');
+    const modal = document.getElementById('qrScannerModal');
+    if (!openButton || !modal) return;
+
+    const closeButton = document.getElementById('closeQrScanner');
+    const cameraButton = document.getElementById('startQrCamera');
+    const cameraPanel = document.getElementById('cameraPanel');
+    const video = document.getElementById('qrCamera');
+    const canvas = document.getElementById('qrScanCanvas');
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    const imageUpload = document.getElementById('qrImageUpload');
+    const cameraFallback = document.getElementById('iphoneCameraFallback');
+    const cameraCapture = document.getElementById('qrCameraCapture');
+    const status = document.getElementById('qrScannerStatus');
+    const walletInput = document.getElementById('recipientWallet');
+    const amountInput = document.getElementById('sendAmount');
+    const senderCurrency = JSON.parse(document.getElementById('sender-wallet-currency').textContent);
+    let cameraStream = null;
+    let scanFrame = null;
+
+    const setStatus = (message, isError = false) => {
+      status.textContent = message;
+      status.className = `mt-4 text-center text-sm ${isError ? 'font-semibold text-red-600' : 'text-slate-500'}`;
+    };
+
+    const stopCamera = () => {
+      if (scanFrame) cancelAnimationFrame(scanFrame);
+      scanFrame = null;
+      if (cameraStream) cameraStream.getTracks().forEach((track) => track.stop());
+      cameraStream = null;
+      video.srcObject = null;
+    };
+
+    const closeModal = () => {
+      stopCamera();
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      cameraPanel.classList.add('hidden');
+      cameraFallback.classList.add('hidden');
+      cameraFallback.classList.remove('flex');
+      imageUpload.value = '';
+      cameraCapture.value = '';
+      document.body.classList.remove('overflow-hidden');
+      openButton.focus();
+    };
+
+    const useQrPayload = (rawData) => {
+      try {
+        const payment = JSON.parse(rawData);
+        const amount = Number(payment.amount);
+        if (payment.type !== 'NEXUSPAY_RECEIVE' || payment.version !== 1 || !payment.wallet) {
+          throw new Error('This is not a NexusPay payment QR code.');
+        }
+        if (payment.currency !== senderCurrency) {
+          throw new Error(`This QR uses ${payment.currency}, but your wallet uses ${senderCurrency}.`);
+        }
+        if (!Number.isFinite(amount) || amount < 0) {
+          throw new Error('The QR code contains an invalid amount.');
+        }
+
+        walletInput.value = payment.wallet;
+        amountInput.value = amount.toFixed(2);
+        walletInput.dispatchEvent(new Event('input', { bubbles: true }));
+        amountInput.dispatchEvent(new Event('input', { bubbles: true }));
+        closeModal();
+        amountInput.focus();
+        if (amount === 0) amountInput.select();
+        return true;
+      } catch (error) {
+        setStatus(error instanceof SyntaxError ? 'Could not read a valid NexusPay QR code.' : error.message, true);
+        return false;
+      }
+    };
+
+    const decodeCanvas = () => {
+      if (typeof jsQR === 'undefined') {
+        setStatus('QR scanner could not load. Check your connection and try again.', true);
+        return false;
+      }
+      const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+      const result = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
+      return result ? useQrPayload(result.data) : false;
+    };
+
+    const scanCamera = () => {
+      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        if (decodeCanvas()) return;
+      }
+      scanFrame = requestAnimationFrame(scanCamera);
+    };
+
+    const startCamera = async () => {
+      stopCamera();
+      cameraFallback.classList.add('hidden');
+      cameraFallback.classList.remove('flex');
+
+      if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+        cameraPanel.classList.add('hidden');
+        cameraFallback.classList.remove('hidden');
+        cameraFallback.classList.add('flex');
+        setStatus('Live camera needs HTTPS on iPhone. Tap below to take a QR photo instead.', true);
+        return;
+      }
+
+      cameraPanel.classList.remove('hidden');
+      setStatus('Point the camera at a NexusPay QR code.');
+      try {
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false,
+        });
+        video.srcObject = cameraStream;
+        await video.play();
+        scanFrame = requestAnimationFrame(scanCamera);
+      } catch (error) {
+        cameraPanel.classList.add('hidden');
+        cameraFallback.classList.remove('hidden');
+        cameraFallback.classList.add('flex');
+        const permissionDenied = error.name === 'NotAllowedError' || error.name === 'SecurityError';
+        setStatus(
+          permissionDenied
+            ? 'Camera permission was blocked. Allow camera access in Safari settings, or use the button below.'
+            : 'Live camera is unavailable. Take a QR photo with the button below.',
+          true,
+        );
+      }
+    };
+
+    openButton.addEventListener('click', () => {
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      document.body.classList.add('overflow-hidden');
+      setStatus('Choose camera or import a QR image.');
+    });
+    closeButton.addEventListener('click', closeModal);
+    cameraButton.addEventListener('click', startCamera);
+    modal.addEventListener('click', (event) => {
+      if (event.target === modal) closeModal();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !modal.classList.contains('hidden')) closeModal();
+    });
+    window.addEventListener('pagehide', stopCamera);
+
+    const decodeImageFile = (file) => {
+      if (!file) return;
+      stopCamera();
+      cameraPanel.classList.add('hidden');
+      setStatus('Reading QR image…');
+      const image = new Image();
+      const imageUrl = URL.createObjectURL(file);
+      image.onload = () => {
+        const maxSize = 1600;
+        const scale = Math.min(1, maxSize / Math.max(image.naturalWidth, image.naturalHeight));
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(imageUrl);
+        if (!decodeCanvas()) setStatus('No readable QR code was found in this image.', true);
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(imageUrl);
+        setStatus('This image could not be opened. Please choose another PNG.', true);
+      };
+      image.src = imageUrl;
+    };
+
+    imageUpload.addEventListener('change', () => decodeImageFile(imageUpload.files?.[0]));
+    cameraCapture.addEventListener('change', () => decodeImageFile(cameraCapture.files?.[0]));
+  })();
+</script>
+{% endif %}
 {% endblock %}
