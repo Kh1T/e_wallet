@@ -34,6 +34,12 @@ DEBUG = True
 
 ALLOWED_HOSTS = ['*']
 
+# HTTPS development tunnel used to test the app from mobile devices.
+CSRF_TRUSTED_ORIGINS = [
+    'https://sector-ritzy-degrease.ngrok-free.dev',
+]
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
 
 # Application definition
 
