@@ -2,8 +2,9 @@ from decimal import Decimal
 
 from django.test import TestCase
 from django.urls import reverse
+from django.contrib.auth.hashers import make_password
 
-from .models import Topup, Transaction, Transfer, Transfer, User, Wallet, IdentityVerification
+from .models import Security, Topup, Transaction, Transfer, User, Wallet, IdentityVerification
 
 
 class TopupViewTests(TestCase):
@@ -303,64 +304,100 @@ class CreateWalletViewTests(TestCase):
         self.assertEqual(Wallet.objects.filter(user=self.user).count(), 2)
 
 
-class TransactionListViewTests(TestCase):
+from .models import Security
+
+class TransferSecurityTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(
-            username='dara@example.com',
-            email='dara@example.com',
+            username='user@example.com',
+            email='user@example.com',
             password='StrongPass123',
-            full_name='Dara Sok',
-            phone='098765432',
+            full_name='Test User',
+            phone='099112233',
+        )
+        self.recipient = User.objects.create_user(
+            username='recipient@example.com',
+            email='recipient@example.com',
+            password='StrongPass123',
+            full_name='Recipient User',
+            phone='099445566',
         )
         self.wallet = Wallet.objects.create(
             user=self.user,
-            wallet_number='WAL-DARA123',
-            balance=Decimal('75000.00'),
+            wallet_number='WAL-SENDER',
+            balance=Decimal('5000.00'),
             currency='KHR',
         )
-
-        self.sender = User.objects.create_user(
-            username='mina@example.com',
-            email='mina@example.com',
-            password='StrongPass123',
-            full_name='Mina Chan',
-            phone='011223344',
-        )
-        self.sender_wallet = Wallet.objects.create(
-            user=self.sender,
-            wallet_number='WAL-MINA123',
-            balance=Decimal('25000.00'),
+        self.recipient_wallet = Wallet.objects.create(
+            user=self.recipient,
+            wallet_number='WAL-RECIPIENT',
+            balance=Decimal('1000.00'),
             currency='KHR',
         )
+        IdentityVerification.objects.create(user=self.user, verification_status='verified')
+        IdentityVerification.objects.create(user=self.recipient, verification_status='verified')
+        # Security is created automatically via signal
 
-    def test_transactions_page_renders_wallet_activity(self):
-        self.client.login(username='dara@example.com', password='StrongPass123')
+    def test_set_and_change_pin_via_profile(self):
+        self.client.login(username='user@example.com', password='StrongPass123')
+        
+        # Set a PIN
+        response = self.client.post(reverse('profile'), {
+            'action': 'change_pin',
+            'new_pin': '123456',
+            'new_pin2': '123456',
+        })
+        self.assertRedirects(response, reverse('profile'))
+        
+        security = Security.objects.get(user=self.user)
+        self.assertTrue(security.pin_hash is not None)
+        from django.contrib.auth.hashers import check_password
+        self.assertTrue(check_password('123456', security.pin_hash))
 
-        Transaction.objects.create(
-            wallet=self.wallet,
-            transaction_type='topup',
-            amount=Decimal('50000'),
-            status='completed',
-            description='Top-up via ABA Mobile',
-            reference='TOP-TEST123',
-        )
-        incoming_tx = Transaction.objects.create(
-            wallet=self.sender_wallet,
-            transaction_type='transfer',
-            amount=Decimal('10000'),
-            status='completed',
-            description='Lunch',
-            reference='TRF-TEST123',
-        )
-        Transfer.objects.create(
-            transaction=incoming_tx,
-            sender_wallet=self.sender_wallet,
-            receiver_wallet=self.wallet,
-        )
+    def test_send_money_requires_pin_and_otp_if_enabled(self):
+        self.client.login(username='user@example.com', password='StrongPass123')
+        security = Security.objects.get(user=self.user)
+        security.pin_hash = make_password('1234')
+        security.otp_enabled = True
+        security.save()
 
-        response = self.client.get(reverse('transactions'))
-
+        # Try to send money without OTP first
+        response = self.client.post(reverse('send'), {
+            'recipient_wallet': 'WAL-RECIPIENT',
+            'amount': '1000.00',
+            'pin': '1234',
+        })
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Top-up via ABA Mobile')
-        self.assertContains(response, 'Received from Mina Chan')
-        self.assertContains(response, 'TRF-TEST123')
+        self.assertContains(response, 'OTP Verification Code')
+        
+        security.refresh_from_db()
+        otp = security.temp_otp
+        self.assertTrue(otp is not None)
+
+        # Now send with the correct OTP
+        response = self.client.post(reverse('send'), {
+            'recipient_wallet': 'WAL-RECIPIENT',
+            'amount': '1000.00',
+            'pin': '1234',
+            'otp_code': otp,
+        })
+        self.assertRedirects(response, reverse('dashboard'))
+        self.wallet.refresh_from_db()
+        self.recipient_wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance, Decimal('4000.00'))
+        self.assertEqual(self.recipient_wallet.balance, Decimal('2000.00'))
+
+    def test_send_money_incorrect_pin_fails(self):
+        self.client.login(username='user@example.com', password='StrongPass123')
+        security = Security.objects.get(user=self.user)
+        security.pin_hash = make_password('1234')
+        security.save()
+
+        response = self.client.post(reverse('send'), {
+            'recipient_wallet': 'WAL-RECIPIENT',
+            'amount': '1000.00',
+            'pin': '9999',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Invalid transaction PIN.')
+

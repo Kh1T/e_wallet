@@ -10,7 +10,11 @@ class User(AbstractUser):
     phone = models.CharField(max_length=50, unique=True)
     role = models.CharField(max_length=50, default='customer')
     status = models.CharField(max_length=50, default='active')
-    
+
+    # Password reset fields
+    password_reset_token = models.CharField(max_length=255, null=True, blank=True)
+    password_reset_sent_at = models.DateTimeField(null=True, blank=True)
+
     # AbstractUser already has password, date_joined, etc.
 
 class Wallet(models.Model):
@@ -75,8 +79,11 @@ class Security(models.Model):
     otp_enabled = models.BooleanField(default=False)
     two_factor_enabled = models.BooleanField(default=False)
     biometric_enabled = models.BooleanField(default=False)
+    temp_otp = models.CharField(max_length=6, null=True, blank=True)
+    temp_otp_expiry = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
 
 class TransactionLimit(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
@@ -144,3 +151,14 @@ class FraudDetection(models.Model):
     risk_score = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
     status = models.CharField(max_length=50, default='pending')
     detected_at = models.DateTimeField(auto_now_add=True)
+
+
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+
+@receiver(post_save, sender=User)
+def create_user_security_and_limits(sender, instance, created, **kwargs):
+    if created:
+        Security.objects.get_or_create(user=instance)
+        TransactionLimit.objects.get_or_create(user=instance)
+

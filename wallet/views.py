@@ -23,39 +23,23 @@ import random
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 
+from .email_utils import (
+    generate_reset_token,
+    send_password_reset_email,
+    send_password_reset_confirmation,
+)
 
-def generate_wallet_number(user):
-    """
-    Generate a 9-digit wallet number in format "XXX XXX XXX" where:
-    - First 3 digits are the same for all wallets of the same user
-    - Last 6 digits are unique (displayed as "XXX XXX")
-    """
-    # Get existing wallets for this user to determine the prefix
-    existing_wallets = Wallet.objects.filter(user=user).order_by('created_at')
-    
-    if existing_wallets.exists():
-        # Extract first 3 digits from first wallet as prefix
-        first_wallet_number = existing_wallets.first().wallet_number.replace(' ', '')
-        prefix = first_wallet_number[:3]
-    else:
-        # Generate a random 3-digit prefix for this user (010-999)
-        prefix = str(random.randint(10, 999)).zfill(3)
-    
-    # Generate a unique 6-digit suffix
-    max_attempts = 100
-    for _ in range(max_attempts):
-        suffix = str(random.randint(0, 999999)).zfill(6)
-        wallet_number_raw = prefix + suffix
-        wallet_number = f"{prefix} {suffix[:3]} {suffix[3:]}"
-        
-        # Check if this wallet number already exists (check without spaces)
-        if not Wallet.objects.filter(wallet_number=wallet_number).exists():
-            return wallet_number
-    
-    # If we can't find a unique number after max attempts, use timestamp-based approach
-    import time
-    timestamp_suffix = str(int(time.time()))[-6:].zfill(6)
-    return f"{prefix} {timestamp_suffix[:3]} {timestamp_suffix[3:]}"
+from .email_utils import (
+    generate_reset_token,
+    send_password_reset_email,
+    send_password_reset_confirmation,
+)
+
+from .email_utils import (
+    generate_reset_token,
+    send_password_reset_email,
+    send_password_reset_confirmation,
+)
 
 
 def _set_jwt_cookies(response, access_token, refresh_token=None):
@@ -91,6 +75,7 @@ from .serializers import (
     BillPaymentSerializer, WithdrawalSerializer, TopupSerializer, TransferSerializer,
     FraudDetectionSerializer,
     RegisterSerializer, LoginSerializer, ChangePasswordSerializer, UserProfileSerializer,
+    generate_wallet_number,
 )
 from .forms import (
     LoginForm, RegisterForm, SendMoneyForm, TopupForm,
@@ -173,6 +158,115 @@ class LogoutPageView(View):
     def post(self, request):
         auth_logout(request)
         return redirect('login')
+
+
+class ForgotPasswordView(View):
+    """GET/POST /forgot-password/ — Request password reset via email."""
+    template_name = 'wallet/forgot_password.html'
+
+    def get(self, request):
+        if request.user.is_authenticated:
+            return redirect('dashboard')
+        return render(request, self.template_name, {'form': ForgotPasswordForm()})
+
+    def post(self, request):
+        form = ForgotPasswordForm(request.POST)
+        if form.is_valid():
+            email = form.cleaned_data['email']
+            try:
+                user = User.objects.get(email=email)
+                # Generate reset token
+                token = generate_reset_token()
+                user.password_reset_token = token
+                user.password_reset_sent_at = timezone.now()
+                user.save()
+
+                # Build reset URL
+                reset_url = request.build_absolute_uri(
+                    reverse('reset-password') + f'?token={token}'
+                )
+
+                # Send email via Resend
+                result = send_password_reset_email(user, reset_url)
+
+                if result['success']:
+                    messages.success(request, 'Password reset link has been sent to your email.')
+                    return redirect('login')
+                else:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Failed to send reset email: {result.get('error', 'Unknown error')}")
+                    messages.error(request, f"Failed to send reset email: {result.get('error', 'Please try again later.')}")
+            except User.DoesNotExist:
+                # Don't reveal if email exists
+                messages.success(request, 'Password reset link has been sent to your email.')
+                return redirect('login')
+
+        return render(request, self.template_name, {'form': form})
+
+
+class ResetPasswordView(View):
+    """GET/POST /reset-password/ — Reset password using token."""
+    template_name = 'wallet/reset_password.html'
+
+    def get(self, request):
+        if request.user.is_authenticated:
+            return redirect('dashboard')
+
+        token = request.GET.get('token')
+        if not token:
+            messages.error(request, 'Invalid reset link.')
+            return redirect('login')
+
+        # Validate token
+        try:
+            user = User.objects.get(password_reset_token=token)
+            # Check if token is expired (1 hour)
+            if user.password_reset_sent_at:
+                time_diff = timezone.now() - user.password_reset_sent_at
+                if time_diff.total_seconds() > 3600:
+                    messages.error(request, 'Reset link has expired. Please request a new one.')
+                    return redirect('forgot-password')
+        except User.DoesNotExist:
+            messages.error(request, 'Invalid reset link.')
+            return redirect('login')
+
+        return render(request, self.template_name, {'form': ResetPasswordForm(), 'token': token})
+
+    def post(self, request):
+        token = request.POST.get('token')
+        if not token:
+            messages.error(request, 'Invalid reset link.')
+            return redirect('login')
+
+        form = ResetPasswordForm(request.POST)
+        if form.is_valid():
+            try:
+                user = User.objects.get(password_reset_token=token)
+                # Check if token is expired
+                if user.password_reset_sent_at:
+                    time_diff = timezone.now() - user.password_reset_sent_at
+                    if time_diff.total_seconds() > 3600:
+                        messages.error(request, 'Reset link has expired. Please request a new one.')
+                        return redirect('forgot-password')
+
+                # Set new password
+                user.set_password(form.cleaned_data['new_password'])
+                user.password_reset_token = None
+                user.password_reset_sent_at = None
+                user.save()
+
+                # Send confirmation email
+                send_password_reset_confirmation(user)
+
+                messages.success(request, 'Password has been reset successfully. Please log in.')
+                return redirect('login')
+
+            except User.DoesNotExist:
+                messages.error(request, 'Invalid reset link.')
+                return redirect('login')
+
+        return render(request, self.template_name, {'form': form, 'token': token})
 
 
 class DashboardView(LoginRequiredMixin, View):
@@ -440,7 +534,7 @@ class WalletManagementView(LoginRequiredMixin, View):
 
 
 class SendMoneyView(LoginRequiredMixin, View):
-    """GET/POST /send/ — Transfer money to another wallet by wallet number."""
+    """GET/POST /send/ — Transfer money to another wallet by wallet number with PIN and OTP verification."""
     login_url = '/login/'
     template_name = 'wallet/send.html'
 
@@ -448,12 +542,22 @@ class SendMoneyView(LoginRequiredMixin, View):
         wallet = Wallet.objects.filter(user=request.user).first()
         verification = IdentityVerification.objects.filter(user=request.user).first()
         kyc_verified = verification and verification.verification_status == 'verified'
+        security, _ = Security.objects.get_or_create(user=request.user)
+        has_pin = bool(security.pin_hash)
 
         if not kyc_verified:
             messages.warning(request, 'KYC verification is required to send money. Please complete your KYC verification.')
+        elif not has_pin:
+            messages.warning(request, 'You must set up a transaction PIN in your profile settings before sending money.')
 
         return render(request, self.template_name, {
-            'form': SendMoneyForm(), 'wallet': wallet, 'kyc_verified': kyc_verified, 'active_page': 'send',
+            'form': SendMoneyForm(),
+            'wallet': wallet,
+            'kyc_verified': kyc_verified,
+            'has_pin': has_pin,
+            'otp_required': security.otp_enabled,
+            'otp_challenge': False,
+            'active_page': 'send',
         })
 
     def post(self, request):
@@ -463,12 +567,18 @@ class SendMoneyView(LoginRequiredMixin, View):
         # Check KYC verification status
         verification = IdentityVerification.objects.filter(user=request.user).first()
         kyc_verified = verification and verification.verification_status == 'verified'
+        security, _ = Security.objects.get_or_create(user=request.user)
+        has_pin = bool(security.pin_hash)
 
         if not kyc_verified:
             messages.error(request, 'KYC verification is required to send money. Please complete your KYC verification.')
             return render(request, self.template_name, {
-                'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'active_page': 'send'
+                'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
             })
+
+        if not has_pin:
+            messages.error(request, 'You must set up a transaction PIN in your profile settings before sending money.')
+            return redirect('profile')
 
         if not wallet:
             messages.error(request, 'You do not have a wallet yet.')
@@ -476,19 +586,81 @@ class SendMoneyView(LoginRequiredMixin, View):
 
         if form.is_valid():
             d = form.cleaned_data
+            
+            # 1. Verify PIN
+            from django.contrib.auth.hashers import check_password
+            if not check_password(d['pin'], security.pin_hash):
+                form.add_error('pin', 'Invalid transaction PIN.')
+                return render(request, self.template_name, {
+                    'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+                })
+
+            # 2. Verify OTP if enabled
+            if security.otp_enabled:
+                otp_code = d.get('otp_code')
+                if not otp_code:
+                    # Generate and send OTP
+                    import random
+                    otp = str(random.randint(100000, 999999))
+                    security.temp_otp = otp
+                    security.temp_otp_expiry = timezone.now() + timezone.timedelta(minutes=5)
+                    security.save()
+
+                    Notification.objects.create(
+                        user=request.user,
+                        title='Transfer OTP Code',
+                        message=f'Your OTP code for sending money is: {otp}',
+                    )
+                    messages.info(request, 'An OTP has been generated. Please check your notifications to verify.')
+                    
+                    return render(request, self.template_name, {
+                        'form': form,
+                        'wallet': wallet,
+                        'kyc_verified': kyc_verified,
+                        'has_pin': has_pin,
+                        'otp_required': True,
+                        'otp_challenge': True,
+                        'active_page': 'send',
+                    })
+                
+                # If OTP code is submitted, verify it
+                if security.temp_otp != otp_code or security.temp_otp_expiry < timezone.now():
+                    form.add_error('otp_code', 'Invalid or expired OTP code.')
+                    return render(request, self.template_name, {
+                        'form': form,
+                        'wallet': wallet,
+                        'kyc_verified': kyc_verified,
+                        'has_pin': has_pin,
+                        'otp_required': True,
+                        'otp_challenge': True,
+                        'active_page': 'send',
+                    })
+
+            # Clear temporary OTP once validation succeeds
+            if security.otp_enabled:
+                security.temp_otp = None
+                security.temp_otp_expiry = None
+                security.save()
+
             try:
                 recipient = Wallet.objects.get(wallet_number=d['recipient_wallet'])
             except Wallet.DoesNotExist:
                 form.add_error('recipient_wallet', 'Wallet number not found.')
-                return render(request, self.template_name, {'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'active_page': 'send'})
+                return render(request, self.template_name, {
+                    'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+                })
 
             if recipient.pk == wallet.pk:
                 form.add_error('recipient_wallet', 'You cannot transfer to your own wallet.')
-                return render(request, self.template_name, {'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'active_page': 'send'})
+                return render(request, self.template_name, {
+                    'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+                })
 
             if wallet.balance < d['amount']:
                 form.add_error('amount', f'Insufficient balance. Available: {wallet.balance} {wallet.currency}')
-                return render(request, self.template_name, {'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'active_page': 'send'})
+                return render(request, self.template_name, {
+                    'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+                })
 
             with db_transaction.atomic():
                 tx = Transaction.objects.create(
@@ -508,17 +680,26 @@ class SendMoneyView(LoginRequiredMixin, View):
                 recipient.balance += d['amount']
                 wallet.save()
                 recipient.save()
+                
                 Notification.objects.create(
                     user=recipient.user,
                     transaction=tx,
                     title='Money Received',
                     message=f'You received {d["amount"]} {wallet.currency} from {request.user.full_name}.',
                 )
+                Notification.objects.create(
+                    user=request.user,
+                    transaction=tx,
+                    title='Money Sent',
+                    message=f'You sent {d["amount"]} {wallet.currency} to {recipient.user.full_name}.',
+                )
 
             messages.success(request, f'Successfully sent {d["amount"]} {wallet.currency} to {recipient.wallet_number}!')
             return redirect('dashboard')
 
-        return render(request, self.template_name, {'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'active_page': 'send'})
+        return render(request, self.template_name, {
+            'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+        })
 
 
 class TopupView(LoginRequiredMixin, View):
@@ -598,26 +779,32 @@ class TopupView(LoginRequiredMixin, View):
 
 
 class ProfileView(LoginRequiredMixin, View):
-    """GET/POST /profile/ — View & update profile, change password."""
+    """GET/POST /profile/ — View & update profile, change password, manage security PIN and OTP."""
     login_url = '/login/'
     template_name = 'wallet/profile.html'
 
     def get(self, request):
+        security, _ = Security.objects.get_or_create(user=request.user)
         profile_form  = ProfileUpdateForm(initial={
             'full_name': request.user.full_name,
             'phone':     request.user.phone,
         })
         password_form = ChangePasswordForm()
+        pin_form = ChangePinForm(has_pin=bool(security.pin_hash))
         return render(request, self.template_name, {
             'profile_form':  profile_form,
             'password_form': password_form,
+            'pin_form':      pin_form,
+            'security':      security,
             'active_page':   'profile',
         })
 
     def post(self, request):
         action = request.POST.get('action')
+        security, _ = Security.objects.get_or_create(user=request.user)
         profile_form  = ProfileUpdateForm(initial={'full_name': request.user.full_name, 'phone': request.user.phone})
         password_form = ChangePasswordForm()
+        pin_form = ChangePinForm(has_pin=bool(security.pin_hash))
 
         if action == 'update_profile':
             profile_form = ProfileUpdateForm(request.POST)
@@ -642,11 +829,320 @@ class ProfileView(LoginRequiredMixin, View):
                     messages.success(request, 'Password changed successfully!')
                     return redirect('profile')
 
+        elif action == 'change_pin':
+            pin_form = ChangePinForm(request.POST, has_pin=bool(security.pin_hash))
+            if pin_form.is_valid():
+                d = pin_form.cleaned_data
+                from django.contrib.auth.hashers import make_password, check_password
+                if security.pin_hash:
+                    if not check_password(d['old_pin'], security.pin_hash):
+                        pin_form.add_error('old_pin', 'Current PIN is incorrect.')
+                        return render(request, self.template_name, {
+                            'profile_form':  profile_form,
+                            'password_form': password_form,
+                            'pin_form':      pin_form,
+                            'security':      security,
+                            'active_page':   'profile',
+                        })
+                security.pin_hash = make_password(d['new_pin'])
+                security.save()
+                messages.success(request, 'Transaction PIN updated successfully!')
+                return redirect('profile')
+
+        elif action == 'toggle_security':
+            otp_enabled = request.POST.get('otp_enabled') == 'on'
+            security.otp_enabled = otp_enabled
+            security.two_factor_enabled = otp_enabled
+            security.save()
+            messages.success(request, f"OTP validation {'enabled' if otp_enabled else 'disabled'} successfully!")
+            return redirect('profile')
+
         return render(request, self.template_name, {
             'profile_form':  profile_form,
             'password_form': password_form,
+            'pin_form':      pin_form,
+            'security':      security,
             'active_page':   'profile',
         })
+
+
+class UserReportsView(LoginRequiredMixin, View):
+    """GET /reports/ — View daily, monthly, and annual transaction reports."""
+    login_url = '/login/'
+    template_name = 'wallet/reports.html'
+
+    def get(self, request):
+        wallet = Wallet.objects.filter(user=request.user).first()
+        report_type = request.GET.get('report_type', 'daily')
+        selected_date = request.GET.get('date')
+        selected_month = request.GET.get('month')
+        selected_year = request.GET.get('year')
+
+        from datetime import datetime, timedelta
+        from django.db.models import Sum, Count
+        from django.db.models.functions import TruncDate, TruncMonth, TruncYear
+
+        context = {
+            'wallet': wallet,
+            'report_type': report_type,
+            'active_page': 'reports',
+        }
+
+        if not wallet:
+            context['no_wallet'] = True
+            return render(request, self.template_name, context)
+
+        # Get user's wallet IDs for filtering
+        user_wallet_ids = Wallet.objects.filter(user=request.user).values_list('id', flat=True)
+
+        # Daily Report
+        if report_type == 'daily':
+            if selected_date:
+                try:
+                    report_date = datetime.strptime(selected_date, '%Y-%m-%d').date()
+                except ValueError:
+                    report_date = timezone.now().date()
+            else:
+                report_date = timezone.now().date()
+
+            # Get all transactions for this day (sent from user's wallets + received by user's wallets)
+            sent_transactions = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                created_at__date=report_date
+            ).select_related('wallet', 'merchant', 'biller').order_by('-created_at')
+
+            # Received transfers
+            received_transfers = Transfer.objects.filter(
+                receiver_wallet__in=user_wallet_ids,
+                created_at__date=report_date
+            ).select_related('transaction', 'sender_wallet__user').order_by('-created_at')
+
+            # Calculate totals
+            total_sent = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                transaction_type='transfer',
+                created_at__date=report_date
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+            total_topup = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                transaction_type='topup',
+                created_at__date=report_date
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+            total_received = Transfer.objects.filter(
+                receiver_wallet__in=user_wallet_ids,
+                created_at__date=report_date
+            ).aggregate(total=Sum('transaction__amount'))['total'] or Decimal('0')
+
+            # Count by type
+            transaction_counts = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                created_at__date=report_date
+            ).values('transaction_type').annotate(
+                count=Count('id'),
+                total=Sum('amount')
+            ).order_by('transaction_type')
+
+            context.update({
+                'report_date': report_date,
+                'sent_transactions': sent_transactions,
+                'received_transfers': received_transfers,
+                'total_sent': total_sent,
+                'total_topup': total_topup,
+                'total_received': total_received,
+                'transaction_counts': transaction_counts,
+                'net_flow': total_received + total_topup - total_sent,
+            })
+
+        # Monthly Report
+        elif report_type == 'monthly':
+            if selected_month:
+                try:
+                    report_month = datetime.strptime(selected_month, '%Y-%m').date()
+                except ValueError:
+                    report_month = timezone.now().date().replace(day=1)
+            else:
+                report_month = timezone.now().date().replace(day=1)
+
+            month_start = report_month.replace(day=1)
+            if report_month.month == 12:
+                month_end = report_month.replace(year=report_month.year + 1, month=1, day=1)
+            else:
+                month_end = report_month.replace(month=report_month.month + 1, day=1)
+
+            # Daily breakdown for the month
+            daily_breakdown = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                created_at__date__gte=month_start,
+                created_at__date__lt=month_end
+            ).annotate(
+                day=TruncDate('created_at')
+            ).values('day').annotate(
+                count=Count('id'),
+                total_sent=Sum('amount', filter=Q(transaction_type='transfer')),
+                total_topup=Sum('amount', filter=Q(transaction_type='topup')),
+            ).order_by('day')
+
+            # Received transfers by day
+            received_by_day = Transfer.objects.filter(
+                receiver_wallet__in=user_wallet_ids,
+                created_at__date__gte=month_start,
+                created_at__date__lt=month_end
+            ).annotate(
+                day=TruncDate('created_at')
+            ).values('day').annotate(
+                total_received=Sum('transaction__amount'),
+                count=Count('id')
+            ).order_by('day')
+
+            # Monthly totals
+            monthly_sent = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                transaction_type='transfer',
+                created_at__date__gte=month_start,
+                created_at__date__lt=month_end
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+            monthly_topup = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                transaction_type='topup',
+                created_at__date__gte=month_start,
+                created_at__date__lt=month_end
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+            monthly_received = Transfer.objects.filter(
+                receiver_wallet__in=user_wallet_ids,
+                created_at__date__gte=month_start,
+                created_at__date__lt=month_end
+            ).aggregate(total=Sum('transaction__amount'))['total'] or Decimal('0')
+
+            # Transaction type summary
+            transaction_types = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                created_at__date__gte=month_start,
+                created_at__date__lt=month_end
+            ).values('transaction_type').annotate(
+                count=Count('id'),
+                total=Sum('amount')
+            ).order_by('transaction_type')
+
+            context.update({
+                'report_month': report_month,
+                'daily_breakdown': daily_breakdown,
+                'received_by_day': received_by_day,
+                'monthly_sent': monthly_sent,
+                'monthly_topup': monthly_topup,
+                'monthly_received': monthly_received,
+                'monthly_net': monthly_received + monthly_topup - monthly_sent,
+                'transaction_types': transaction_types,
+            })
+
+        # Annual Report
+        elif report_type == 'annual':
+            if selected_year:
+                try:
+                    report_year = int(selected_year)
+                except ValueError:
+                    report_year = timezone.now().year
+            else:
+                report_year = timezone.now().year
+
+            year_start = datetime(report_year, 1, 1).date()
+            year_end = datetime(report_year + 1, 1, 1).date()
+
+            # Monthly breakdown for the year
+            monthly_breakdown = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                created_at__date__gte=year_start,
+                created_at__date__lt=year_end
+            ).annotate(
+                month=TruncMonth('created_at')
+            ).values('month').annotate(
+                count=Count('id'),
+                total_sent=Sum('amount', filter=Q(transaction_type='transfer')),
+                total_topup=Sum('amount', filter=Q(transaction_type='topup')),
+            ).order_by('month')
+
+            # Received transfers by month
+            received_by_month = Transfer.objects.filter(
+                receiver_wallet__in=user_wallet_ids,
+                created_at__date__gte=year_start,
+                created_at__date__lt=year_end
+            ).annotate(
+                month=TruncMonth('created_at')
+            ).values('month').annotate(
+                total_received=Sum('transaction__amount'),
+                count=Count('id')
+            ).order_by('month')
+
+            # Annual totals
+            annual_sent = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                transaction_type='transfer',
+                created_at__date__gte=year_start,
+                created_at__date__lt=year_end
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+            annual_topup = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                transaction_type='topup',
+                created_at__date__gte=year_start,
+                created_at__date__lt=year_end
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+            annual_received = Transfer.objects.filter(
+                receiver_wallet__in=user_wallet_ids,
+                created_at__date__gte=year_start,
+                created_at__date__lt=year_end
+            ).aggregate(total=Sum('transaction__amount'))['total'] or Decimal('0')
+
+            # Quarter summary
+            quarter_totals = []
+            for q in range(1, 5):
+                q_start = datetime(report_year, (q - 1) * 3 + 1, 1).date()
+                q_end = datetime(report_year, q * 3 + 1 if q < 4 else 1, 1).date() if q < 4 else datetime(report_year + 1, 1, 1).date()
+
+                q_sent = Transaction.objects.filter(
+                    wallet__in=user_wallet_ids,
+                    transaction_type='transfer',
+                    created_at__date__gte=q_start,
+                    created_at__date__lt=q_end
+                ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+                q_topup = Transaction.objects.filter(
+                    wallet__in=user_wallet_ids,
+                    transaction_type='topup',
+                    created_at__date__gte=q_start,
+                    created_at__date__lt=q_end
+                ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+                q_received = Transfer.objects.filter(
+                    receiver_wallet__in=user_wallet_ids,
+                    created_at__date__gte=q_start,
+                    created_at__date__lt=q_end
+                ).aggregate(total=Sum('transaction__amount'))['total'] or Decimal('0')
+
+                quarter_totals.append({
+                    'quarter': f'Q{q}',
+                    'sent': q_sent,
+                    'topup': q_topup,
+                    'received': q_received,
+                    'net': q_received + q_topup - q_sent,
+                })
+
+            context.update({
+                'report_year': report_year,
+                'monthly_breakdown': monthly_breakdown,
+                'received_by_month': received_by_month,
+                'annual_sent': annual_sent,
+                'annual_topup': annual_topup,
+                'annual_received': annual_received,
+                'annual_net': annual_received + annual_topup - annual_sent,
+                'quarter_totals': quarter_totals,
+            })
+
+        return render(request, self.template_name, context)
 
 
 class AdminRequiredMixin(LoginRequiredMixin):
@@ -1083,6 +1579,47 @@ class PeerToPeerTransferView(APIView):
         amount = request.data.get('amount')
         description = request.data.get('description', '')
 
+        # Verify Security Settings (PIN and OTP)
+        security, _ = Security.objects.get_or_create(user=request.user)
+        if not security.pin_hash:
+            return Response({'error': 'Please set up a transaction PIN in your security settings before sending money.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        pin = request.data.get('pin')
+        if not pin:
+            return Response({'error': 'Transaction PIN is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        from django.contrib.auth.hashers import check_password
+        if not check_password(pin, security.pin_hash):
+            return Response({'error': 'Invalid transaction PIN.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if security.otp_enabled:
+            otp = request.data.get('otp')
+            if not otp:
+                import random
+                otp_val = str(random.randint(100000, 999999))
+                security.temp_otp = otp_val
+                security.temp_otp_expiry = timezone.now() + timezone.timedelta(minutes=5)
+                security.save()
+
+                Notification.objects.create(
+                    user=request.user,
+                    title='Transfer OTP Code',
+                    message=f'Your OTP code for sending money is: {otp_val}',
+                )
+                return Response({
+                    'error': 'OTP verification required.',
+                    'otp_required': True
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            if security.temp_otp != otp or security.temp_otp_expiry < timezone.now():
+                return Response({'error': 'Invalid or expired OTP code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Clear OTP on success
+        if security.otp_enabled:
+            security.temp_otp = None
+            security.temp_otp_expiry = None
+            security.save()
+
         # Validate KYC
         verification = IdentityVerification.objects.filter(user=request.user).first()
         if not (verification and verification.verification_status == 'verified'):
@@ -1486,3 +2023,152 @@ class AdminTransactionSummaryView(APIView):
 class FraudDetectionViewSet(viewsets.ModelViewSet):
     queryset = FraudDetection.objects.all()
     serializer_class = FraudDetectionSerializer
+
+
+# ═════════════════════════════════════════
+#  PASSWORD RESET VIEWS (Resend API)
+# ═════════════════════════════════════════
+
+class PasswordResetRequestView(APIView):
+    """
+    POST /api/auth/password-reset/request/
+    Request password reset. Sends reset link via email.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email')
+
+        if not email:
+            return Response(
+                {'error': 'Email is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            # Don't reveal if email exists for security
+            return Response(
+                {'message': 'If an account exists with this email, a password reset link has been sent.'},
+                status=status.HTTP_200_OK
+            )
+
+        # Generate reset token
+        token = generate_reset_token()
+        user.password_reset_token = token
+        user.password_reset_sent_at = timezone.now()
+        user.save()
+
+        # Build reset URL
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')
+        reset_url = f"{frontend_url}/reset-password?token={token}"
+
+        # Send email via Resend
+        result = send_password_reset_email(user, reset_url)
+
+        if result['success']:
+            return Response(
+                {'message': 'If an account exists with this email, a password reset link has been sent.'},
+                status=status.HTTP_200_OK
+            )
+        else:
+            return Response(
+                {'error': 'Failed to send reset email. Please try again later.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class PasswordResetVerifyView(APIView):
+    """
+    POST /api/auth/password-reset/verify/
+    Verify reset token and set new password.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        token = request.data.get('token')
+        new_password = request.data.get('new_password')
+
+        if not token or not new_password:
+            return Response(
+                {'error': 'Token and new password are required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validate password length
+        if len(new_password) < 8:
+            return Response(
+                {'error': 'Password must be at least 8 characters long.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = User.objects.get(password_reset_token=token)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'Invalid or expired reset token.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check if token is expired (1 hour validity)
+        if user.password_reset_sent_at:
+            time_diff = timezone.now() - user.password_reset_sent_at
+            if time_diff.total_seconds() > 3600:  # 1 hour
+                return Response(
+                    {'error': 'Reset token has expired. Please request a new one.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # Set new password
+        user.set_password(new_password)
+        user.password_reset_token = None
+        user.password_reset_sent_at = None
+        user.save()
+
+        # Send confirmation email
+        send_password_reset_confirmation(user)
+
+        return Response(
+            {'message': 'Password has been reset successfully.'},
+            status=status.HTTP_200_OK
+        )
+
+
+class PasswordResetValidateTokenView(APIView):
+    """
+    GET /api/auth/password-reset/validate/?token=<token>
+    Validate if a reset token is still valid.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        token = request.query_params.get('token')
+
+        if not token:
+            return Response(
+                {'error': 'Token is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = User.objects.get(password_reset_token=token)
+        except User.DoesNotExist:
+            return Response(
+                {'valid': False, 'error': 'Invalid token.'},
+                status=status.HTTP_200_OK
+            )
+
+        # Check if token is expired
+        if user.password_reset_sent_at:
+            time_diff = timezone.now() - user.password_reset_sent_at
+            if time_diff.total_seconds() > 3600:  # 1 hour
+                return Response(
+                    {'valid': False, 'error': 'Token has expired.'},
+                    status=status.HTTP_200_OK
+                )
+
+        return Response(
+            {'valid': True, 'email': user.email},
+            status=status.HTTP_200_OK
+        )

@@ -215,11 +215,27 @@
           <span class="sidebar-link-text">Top Up</span>
         </a>
 
+        <a href="{% url 'reports' %}" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all {% if active_page == 'reports' %}bg-slate-800 text-white{% endif %}" title="Reports">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+          </svg>
+          <span class="sidebar-link-text">Reports</span>
+        </a>
+
         <a href="{% url 'kyc' %}" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all {% if active_page == 'kyc' %}bg-slate-800 text-white{% endif %}" title="KYC Verification">
           <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a7 7 0 017 7v3a7 7 0 11-14 0V9a7 7 0 017-7z"/><path d="M8 12h8"/></svg>
           <span class="sidebar-link-text">KYC Verification</span>
         </a>
         {% if request.user.is_superuser or request.user.is_staff or request.user.role == 'admin' %}
+        <p class="px-4 text-xs font-semibold text-slate-500 uppercase tracking-widest mt-5 mb-3 sidebar-section-title">Administration</p>
+        
+        <a href="/admin/" target="_blank" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all" title="Django Admin">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/>
+          </svg>
+          <span class="sidebar-link-text">Django Admin</span>
+        </a>
+        
         <a href="{% url 'kyc_review' %}" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all {% if active_page == 'kyc_review' %}bg-slate-800 text-white{% endif %}" title="Review KYC">
           <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12H5a2 2 0 00-2 2v4a2 2 0 002 2h4"/><path d="M15 12h4a2 2 0 012 2v4a2 2 0 01-2 2h-4"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/></svg>
           <span class="sidebar-link-text">Review KYC</span>
