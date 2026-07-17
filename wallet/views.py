@@ -2050,6 +2050,216 @@ class FraudDetectionViewSet(viewsets.ModelViewSet):
     serializer_class = FraudDetectionSerializer
 
 
+class AdminDashboardView(AdminRequiredMixin, View):
+    """GET /admin/dashboard/ — Admin portal dashboard with statistics and financial reports."""
+    template_name = 'wallet/admin_dashboard.html'
+
+    def get(self, request):
+        from datetime import datetime, timedelta
+        from django.db.models import Sum, Count, Avg, Q
+        from django.db.models.functions import TruncDate, TruncMonth, TruncYear
+
+        # Date filters
+        today = timezone.now().date()
+        week_start = today - timedelta(days=today.weekday())
+        month_start = today.replace(day=1)
+        year_start = today.replace(month=1, day=1)
+
+        selected_period = request.GET.get('period', 'today')
+
+        # Set date range based on selected period
+        if selected_period == 'today':
+            start_date = today
+            end_date = today + timedelta(days=1)
+            prev_start = today - timedelta(days=1)
+            prev_end = today
+        elif selected_period == 'week':
+            start_date = week_start
+            end_date = today + timedelta(days=1)
+            prev_start = week_start - timedelta(days=7)
+            prev_end = week_start
+        elif selected_period == 'month':
+            start_date = month_start
+            end_date = today + timedelta(days=1)
+            if month_start.month == 1:
+                prev_start = month_start.replace(year=month_start.year - 1, month=12)
+            else:
+                prev_start = month_start.replace(month=month_start.month - 1)
+            prev_end = month_start
+        elif selected_period == 'year':
+            start_date = year_start
+            end_date = today + timedelta(days=1)
+            prev_start = year_start.replace(year=year_start.year - 1)
+            prev_end = year_start
+        else:
+            start_date = today
+            end_date = today + timedelta(days=1)
+            prev_start = today - timedelta(days=1)
+            prev_end = today
+
+        # ─── USER STATISTICS ───
+        total_users = User.objects.count()
+        new_users_period = User.objects.filter(date_joined__date__gte=start_date, date_joined__date__lt=end_date).count()
+        new_users_prev = User.objects.filter(date_joined__date__gte=prev_start, date_joined__date__lt=prev_end).count()
+        active_users = User.objects.filter(status='active').count()
+        verified_users = IdentityVerification.objects.filter(verification_status='verified').count()
+        pending_verifications = IdentityVerification.objects.filter(verification_status='pending').count()
+
+        # ─── WALLET STATISTICS ───
+        total_wallets = Wallet.objects.count()
+        active_wallets = Wallet.objects.filter(status='active').count()
+        frozen_wallets = Wallet.objects.filter(status='frozen').count()
+        total_balance = Wallet.objects.aggregate(total=Sum('balance'))['total'] or Decimal('0')
+        avg_wallet_balance = Wallet.objects.filter(status='active').aggregate(avg=Avg('balance'))['avg'] or Decimal('0')
+
+        # ─── TRANSACTION STATISTICS (Period) ───
+        period_transactions = Transaction.objects.filter(created_at__date__gte=start_date, created_at__date__lt=end_date)
+        total_transactions_period = period_transactions.count()
+        total_volume_period = period_transactions.aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        # Previous period comparison
+        prev_transactions = Transaction.objects.filter(created_at__date__gte=prev_start, created_at__date__lt=prev_end)
+        prev_transaction_count = prev_transactions.count()
+        prev_volume = prev_transactions.aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        # Calculate percentage changes
+        transaction_change = self._calc_percentage_change(total_transactions_period, prev_transaction_count)
+        volume_change = self._calc_percentage_change(total_volume_period, prev_volume)
+
+        # ─── TRANSACTION BREAKDOWN ───
+        transfers = period_transactions.filter(transaction_type='transfer').aggregate(
+            count=Count('id'), total=Sum('amount')
+        )
+        topups = period_transactions.filter(transaction_type='topup').aggregate(
+            count=Count('id'), total=Sum('amount')
+        )
+        withdrawals = period_transactions.filter(transaction_type='withdrawal').aggregate(
+            count=Count('id'), total=Sum('amount')
+        )
+        bill_payments = period_transactions.filter(transaction_type='bill_payment').aggregate(
+            count=Count('id'), total=Sum('amount')
+        )
+
+        # ─── STATUS BREAKDOWN ───
+        completed_transactions = period_transactions.filter(status='completed').count()
+        pending_transactions = period_transactions.filter(status='pending').count()
+        failed_transactions = period_transactions.filter(status='failed').count()
+
+        # ─── REVENUE CALCULATION (Example: 1% fee on transfers) ───
+        transfer_fees = (transfers['total'] or Decimal('0')) * Decimal('0.01')
+        total_revenue = transfer_fees
+
+        # ─── RECENT ACTIVITY ───
+        recent_transactions = Transaction.objects.select_related('wallet', 'wallet__user').order_by('-created_at')[:10]
+        recent_users = User.objects.order_by('-date_joined')[:5]
+        recent_transfers = Transfer.objects.select_related(
+            'transaction', 'sender_wallet__user', 'receiver_wallet__user'
+        ).order_by('-created_at')[:10]
+
+        # ─── CHART DATA (Last 30 days) ───
+        chart_start = today - timedelta(days=29)
+        daily_data = Transaction.objects.filter(
+            created_at__date__gte=chart_start
+        ).annotate(
+            date=TruncDate('created_at')
+        ).values('date').annotate(
+            count=Count('id'),
+            volume=Sum('amount')
+        ).order_by('date')
+
+        # Format chart data for JavaScript
+        chart_labels = []
+        chart_counts = []
+        chart_volumes = []
+
+        for i in range(30):
+            date = chart_start + timedelta(days=i)
+            chart_labels.append(date.strftime('%m/%d'))
+            day_data = next((d for d in daily_data if d['date'] == date), None)
+            chart_counts.append(day_data['count'] if day_data else 0)
+            chart_volumes.append(float(day_data['volume'] or 0) if day_data else 0)
+
+        # ─── TOP USERS BY TRANSACTION VOLUME ───
+        top_users = Wallet.objects.annotate(
+            total_volume=Sum('transactions__amount')
+        ).select_related('user').order_by('-total_volume')[:10]
+
+        # ─── CURRENCY DISTRIBUTION ───
+        currency_distribution = Wallet.objects.values('currency').annotate(
+            count=Count('id'),
+            total_balance=Sum('balance')
+        ).order_by('-count')
+
+        context = {
+            'active_page': 'admin_dashboard',
+            'selected_period': selected_period,
+
+            # User stats
+            'total_users': total_users,
+            'new_users_period': new_users_period,
+            'new_users_prev': new_users_prev,
+            'active_users': active_users,
+            'verified_users': verified_users,
+            'pending_verifications': pending_verifications,
+            'user_change': self._calc_percentage_change(new_users_period, new_users_prev),
+
+            # Wallet stats
+            'total_wallets': total_wallets,
+            'active_wallets': active_wallets,
+            'frozen_wallets': frozen_wallets,
+            'total_balance': total_balance,
+            'avg_wallet_balance': avg_wallet_balance,
+
+            # Transaction stats
+            'total_transactions_period': total_transactions_period,
+            'total_volume_period': total_volume_period,
+            'transaction_change': transaction_change,
+            'volume_change': volume_change,
+
+            # Breakdown
+            'transfers_count': transfers['count'] or 0,
+            'transfers_volume': transfers['total'] or Decimal('0'),
+            'topups_count': topups['count'] or 0,
+            'topups_volume': topups['total'] or Decimal('0'),
+            'withdrawals_count': withdrawals['count'] or 0,
+            'withdrawals_volume': withdrawals['total'] or Decimal('0'),
+            'bill_payments_count': bill_payments['count'] or 0,
+            'bill_payments_volume': bill_payments['total'] or Decimal('0'),
+
+            # Status
+            'completed_transactions': completed_transactions,
+            'pending_transactions': pending_transactions,
+            'failed_transactions': failed_transactions,
+
+            # Revenue
+            'total_revenue': total_revenue,
+
+            # Recent activity
+            'recent_transactions': recent_transactions,
+            'recent_users': recent_users,
+            'recent_transfers': recent_transfers,
+
+            # Chart data
+            'chart_labels': chart_labels,
+            'chart_counts': chart_counts,
+            'chart_volumes': chart_volumes,
+
+            # Top users
+            'top_users': top_users,
+
+            # Currency
+            'currency_distribution': currency_distribution,
+        }
+
+        return render(request, self.template_name, context)
+
+    def _calc_percentage_change(self, current, previous):
+        """Calculate percentage change between two values."""
+        if previous == 0:
+            return 100 if current > 0 else 0
+        return round(((current - previous) / previous) * 100, 1)
+
+
 # ═════════════════════════════════════════
 #  PASSWORD RESET VIEWS (Resend API)
 # ═════════════════════════════════════════
