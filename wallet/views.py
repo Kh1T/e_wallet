@@ -560,7 +560,8 @@ class SendMoneyView(LoginRequiredMixin, View):
     template_name = 'wallet/send.html'
 
     def get(self, request):
-        wallet = Wallet.objects.filter(user=request.user).first()
+        wallets = Wallet.objects.filter(user=request.user)
+        wallet = wallets.first()
         verification = IdentityVerification.objects.filter(user=request.user).first()
         kyc_verified = verification and verification.verification_status == 'verified'
         security, _ = Security.objects.get_or_create(user=request.user)
@@ -572,7 +573,8 @@ class SendMoneyView(LoginRequiredMixin, View):
             messages.warning(request, 'You must set up a transaction PIN in your profile settings before sending money.')
 
         return render(request, self.template_name, {
-            'form': SendMoneyForm(),
+            'form': SendMoneyForm(user=request.user),
+            'wallets': wallets,
             'wallet': wallet,
             'kyc_verified': kyc_verified,
             'has_pin': has_pin,
@@ -582,8 +584,8 @@ class SendMoneyView(LoginRequiredMixin, View):
         })
 
     def post(self, request):
-        wallet = Wallet.objects.filter(user=request.user).first()
-        form   = SendMoneyForm(request.POST)
+        wallets = Wallet.objects.filter(user=request.user)
+        form = SendMoneyForm(request.POST, user=request.user)
 
         # Check KYC verification status
         verification = IdentityVerification.objects.filter(user=request.user).first()
@@ -594,18 +596,20 @@ class SendMoneyView(LoginRequiredMixin, View):
         if not kyc_verified:
             messages.error(request, 'KYC verification is required to send money. Please complete your KYC verification.')
             return render(request, self.template_name, {
-                'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+                'form': form, 'wallets': wallets, 'wallet': wallets.first(),
+                'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
             })
 
         if not has_pin:
             messages.error(request, 'You must set up a transaction PIN in your profile settings before sending money.')
             return redirect('profile')
 
-        if not wallet:
+        if not wallets.exists():
             messages.error(request, 'You do not have a wallet yet.')
             return redirect('dashboard')
 
         if form.is_valid():
+            wallet = form.cleaned_data['sender_wallet']
             d = form.cleaned_data
             
             # 1. Verify PIN
@@ -613,7 +617,7 @@ class SendMoneyView(LoginRequiredMixin, View):
             if not check_password(d['pin'], security.pin_hash):
                 form.add_error('pin', 'Invalid transaction PIN.')
                 return render(request, self.template_name, {
-                    'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+                    'form': form, 'wallets': wallets, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
                 })
 
             # 2. Verify OTP if enabled
@@ -636,6 +640,7 @@ class SendMoneyView(LoginRequiredMixin, View):
                     
                     return render(request, self.template_name, {
                         'form': form,
+                        'wallets': wallets,
                         'wallet': wallet,
                         'kyc_verified': kyc_verified,
                         'has_pin': has_pin,
@@ -649,6 +654,7 @@ class SendMoneyView(LoginRequiredMixin, View):
                     form.add_error('otp_code', 'Invalid or expired OTP code.')
                     return render(request, self.template_name, {
                         'form': form,
+                        'wallets': wallets,
                         'wallet': wallet,
                         'kyc_verified': kyc_verified,
                         'has_pin': has_pin,
@@ -668,19 +674,19 @@ class SendMoneyView(LoginRequiredMixin, View):
             except Wallet.DoesNotExist:
                 form.add_error('recipient_wallet', 'Wallet number not found.')
                 return render(request, self.template_name, {
-                    'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+                    'form': form, 'wallets': wallets, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
                 })
 
             if recipient.pk == wallet.pk:
                 form.add_error('recipient_wallet', 'You cannot transfer to your own wallet.')
                 return render(request, self.template_name, {
-                    'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+                    'form': form, 'wallets': wallets, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
                 })
 
             if wallet.balance < d['amount']:
                 form.add_error('amount', f'Insufficient balance. Available: {wallet.balance} {wallet.currency}')
                 return render(request, self.template_name, {
-                    'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+                    'form': form, 'wallets': wallets, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
                 })
 
             with db_transaction.atomic():
@@ -727,8 +733,9 @@ class SendMoneyView(LoginRequiredMixin, View):
             messages.success(request, f'Successfully sent {d["amount"]} {wallet.currency} to {recipient.wallet_number}!')
             return redirect('dashboard')
 
+        wallet = wallets.filter(id=request.POST.get('sender_wallet')).first() or wallets.first()
         return render(request, self.template_name, {
-            'form': form, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+            'form': form, 'wallets': wallets, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
         })
 
 
@@ -744,9 +751,11 @@ class TopupView(LoginRequiredMixin, View):
         return token
 
     def get(self, request):
-        wallet = Wallet.objects.filter(user=request.user).first()
+        wallets = Wallet.objects.filter(user=request.user)
+        wallet = wallets.first()
         return render(request, self.template_name, {
-            'form': TopupForm(),
+            'form': TopupForm(user=request.user),
+            'wallets': wallets,
             'wallet': wallet,
             'active_page': 'topup',
             'transaction_fee': self.fee_amount,
@@ -754,10 +763,10 @@ class TopupView(LoginRequiredMixin, View):
         })
 
     def post(self, request):
-        wallet = Wallet.objects.filter(user=request.user).first()
-        form   = TopupForm(request.POST)
+        wallets = Wallet.objects.filter(user=request.user)
+        form = TopupForm(request.POST, user=request.user)
 
-        if not wallet:
+        if not wallets.exists():
             messages.error(request, 'You do not have a wallet yet.')
             return redirect('dashboard')
 
@@ -769,6 +778,7 @@ class TopupView(LoginRequiredMixin, View):
                 return redirect('topup')
 
             request.session.pop('topup_submission_token', None)
+            wallet = form.cleaned_data['wallet']
             d = form.cleaned_data
             payment_label = dict(TopupForm.PAYMENT_CHOICES).get(d['payment_method'], d['payment_method'])
             with db_transaction.atomic():
@@ -802,8 +812,10 @@ class TopupView(LoginRequiredMixin, View):
             messages.success(request, success_message)
             return redirect('dashboard')
 
+        wallet = wallets.filter(id=request.POST.get('wallet')).first() or wallets.first()
         return render(request, self.template_name, {
             'form': form,
+            'wallets': wallets,
             'wallet': wallet,
             'active_page': 'topup',
             'transaction_fee': self.fee_amount,

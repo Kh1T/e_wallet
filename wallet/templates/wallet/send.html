@@ -25,16 +25,28 @@
   <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
     <h2 class="text-lg font-bold text-slate-800 mb-4">Transfer Details</h2>
 
-    {% if wallet %}
-    <div class="bg-slate-50 rounded-xl p-4 mb-6 border border-slate-200">
+    <div id="wallet-balance-display" class="bg-slate-50 rounded-xl p-4 mb-6 border border-slate-200">
       <p class="text-sm text-slate-500">Available Balance</p>
-      <p class="text-2xl font-bold text-slate-800">{{ wallet.currency }} {{ wallet.balance }}</p>
-      <p class="text-xs text-slate-400 font-mono mt-1">{{ wallet.wallet_number }}</p>
+      <p class="text-2xl font-bold text-slate-800" id="display-balance">{{ wallet.currency|default:'KHR' }} {{ wallet.balance|default:'0' }}</p>
+      <p class="text-xs text-slate-400 font-mono mt-1" id="display-wallet-number">{{ wallet.wallet_number|default:'' }}</p>
     </div>
-    {% endif %}
 
     <form method="post" id="send-form" class="space-y-5" {% if not kyc_verified or not has_pin %}onsubmit="return false;"{% endif %}>
       {% csrf_token %}
+
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-2">From Wallet</label>
+        <select name="sender_wallet" required
+                class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
+                {% if not kyc_verified or not has_pin %}disabled{% endif %}>
+          {% for w in wallets %}
+          <option value="{{ w.id }}" data-balance="{{ w.balance }}" data-currency="{{ w.currency }}" data-number="{{ w.wallet_number }}" {% if form.sender_wallet.value == w.id|stringformat:'s' %}selected{% endif %}>
+            {{ w.currency }} — {{ w.wallet_number }} (Balance: {{ w.balance }})
+          </option>
+          {% endfor %}
+        </select>
+        {% if form.sender_wallet.errors %}<p class="text-red-500 text-xs mt-1">{{ form.sender_wallet.errors.0 }}</p>{% endif %}
+      </div>
 
       <div>
         <label class="block text-sm font-semibold text-slate-700 mb-2">Recipient Wallet Number</label>
@@ -45,7 +57,7 @@
       </div>
 
       <div>
-        <label class="block text-sm font-semibold text-slate-700 mb-2">Amount ({{ wallet.currency|default:'KHR' }})</label>
+        <label class="block text-sm font-semibold text-slate-700 mb-2">Amount (<span id="amount-currency">{{ wallet.currency|default:'KHR' }}</span>)</label>
         <input type="number" name="amount" value="{{ form.amount.value|default:'' }}" step="0.01" min="0.01"
                class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
                {% if not kyc_verified or not has_pin %}disabled{% endif %}>
@@ -75,8 +87,9 @@
           <div class="space-y-4">
             <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200">
               <p class="text-xs text-slate-400">Total Transfer Amount</p>
-              <p class="text-xl font-bold text-slate-800" id="modal-amount-display">{{ wallet.currency }} 0.00</p>
+              <p class="text-xl font-bold text-slate-800" id="modal-amount-display">{{ wallet.currency|default:'KHR' }} 0.00</p>
               <p class="text-xs text-slate-500 mt-1" id="modal-recipient-display">To Wallet: -</p>
+              <p class="text-xs text-slate-500 mt-1" id="modal-from-display">From Wallet: -</p>
             </div>
 
             <!-- PIN Input -->
@@ -131,6 +144,25 @@
 </div>
 
 <script>
+  const walletSelect = document.querySelector('select[name="sender_wallet"]');
+  const displayBalance = document.getElementById('display-balance');
+  const displayNumber = document.getElementById('display-wallet-number');
+  const amountCurrency = document.getElementById('amount-currency');
+
+  function updateWalletDisplay() {
+      const option = walletSelect.options[walletSelect.selectedIndex];
+      if (!option) return;
+      const currency = option.dataset.currency;
+      const balance = option.dataset.balance;
+      const number = option.dataset.number;
+      displayBalance.textContent = `${currency} ${parseFloat(balance).toFixed(2)}`;
+      displayNumber.textContent = number;
+      amountCurrency.textContent = currency;
+  }
+
+  walletSelect.addEventListener('change', updateWalletDisplay);
+  updateWalletDisplay();
+
   function openPinModal() {
       // Validate form fields first
       const form = document.getElementById('send-form');
@@ -141,10 +173,13 @@
       // Update values in modal
       const recipient = document.querySelector('input[name="recipient_wallet"]').value;
       const amount = document.querySelector('input[name="amount"]').value;
-      const currency = "{{ wallet.currency|default:'KHR' }}";
+      const option = walletSelect.options[walletSelect.selectedIndex];
+      const currency = option ? option.dataset.currency : "{{ wallet.currency|default:'KHR' }}";
+      const number = option ? option.dataset.number : "";
       
       document.getElementById('modal-amount-display').innerText = `${currency} ${parseFloat(amount).toFixed(2)}`;
       document.getElementById('modal-recipient-display').innerText = `To Wallet: ${recipient}`;
+      document.getElementById('modal-from-display').innerText = `From Wallet: ${number}`;
 
       // Show modal
       const modal = document.getElementById('pin-modal');

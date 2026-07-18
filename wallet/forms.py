@@ -2,6 +2,8 @@ from django import forms
 from django.core.exceptions import ValidationError
 from decimal import Decimal
 
+from .models import Wallet
+
 
 class LoginForm(forms.Form):
     email    = forms.EmailField()
@@ -23,6 +25,11 @@ class RegisterForm(forms.Form):
 
 
 class SendMoneyForm(forms.Form):
+    sender_wallet = forms.ModelChoiceField(
+        queryset=Wallet.objects.none(),
+        label='From Wallet',
+        empty_label=None,
+    )
     recipient_wallet = forms.CharField(max_length=100, label='Recipient Wallet Number')
     amount           = forms.DecimalField(
         min_value=Decimal('0.01'), max_digits=12, decimal_places=2
@@ -30,6 +37,11 @@ class SendMoneyForm(forms.Form):
     description = forms.CharField(max_length=255, required=False)
     pin         = forms.CharField(max_length=6, min_length=4, widget=forms.PasswordInput, label='Transaction PIN')
     otp_code    = forms.CharField(max_length=6, required=False, label='OTP Code')
+
+    def __init__(self, *args, user=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if user is not None:
+            self.fields['sender_wallet'].queryset = Wallet.objects.filter(user=user)
 
 
 class ChangePinForm(forms.Form):
@@ -69,6 +81,11 @@ class TopupForm(forms.Form):
         ('bank_transfer', 'Bank Transfer'),
         ('card', 'Credit / Debit Card'),
     ]
+    wallet = forms.ModelChoiceField(
+        queryset=Wallet.objects.none(),
+        label='Top Up To Wallet',
+        empty_label=None,
+    )
     amount = forms.DecimalField(
         required=True,
         min_value=MIN_AMOUNT,
@@ -83,6 +100,11 @@ class TopupForm(forms.Form):
         },
     )
     payment_method = forms.ChoiceField(choices=PAYMENT_CHOICES)
+
+    def __init__(self, *args, user=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if user is not None:
+            self.fields['wallet'].queryset = Wallet.objects.filter(user=user)
 
 
 class ProfileUpdateForm(forms.Form):
