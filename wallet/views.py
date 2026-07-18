@@ -82,6 +82,7 @@ from .forms import (
     ProfileUpdateForm, ChangePasswordForm, KYCVerificationForm,
     WalletManagementForm, UpdateWalletForm,
 )
+from .services import NotificationService
 
 
 # ─────────────────────────────────────────
@@ -116,6 +117,9 @@ class LoginPageView(View):
             )
             if user:
                 auth_login(request, user)
+                # Get IP address if available
+                ip_address = request.META.get('REMOTE_ADDR')
+                NotificationService.notify_login(user=user, ip_address=ip_address)
                 return redirect('dashboard')
             form.add_error(None, 'Invalid email or password.')
         return render(request, self.template_name, {'form': form})
@@ -430,6 +434,11 @@ class CreateWalletView(LoginRequiredMixin, View):
             wallet_number=generate_wallet_number(request.user),
             currency='KHR',
         )
+        NotificationService.notify_wallet_created(
+            user=request.user,
+            wallet_number=wallet.wallet_number,
+            currency=wallet.currency
+        )
         messages.success(request, f'Wallet created successfully! Your wallet number is {wallet.wallet_number}.')
         return redirect('dashboard')
 
@@ -497,6 +506,10 @@ class WalletManagementView(LoginRequiredMixin, View):
             else:
                 wallet.status = 'frozen'
                 wallet.save()
+                NotificationService.notify_wallet_frozen(
+                    user=request.user,
+                    wallet_number=wallet.wallet_number
+                )
                 messages.success(request, 'Wallet has been frozen successfully.')
             return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
 
@@ -506,6 +519,10 @@ class WalletManagementView(LoginRequiredMixin, View):
             else:
                 wallet.status = 'active'
                 wallet.save()
+                NotificationService.notify_wallet_unfrozen(
+                    user=request.user,
+                    wallet_number=wallet.wallet_number
+                )
                 messages.success(request, 'Wallet has been unfrozen successfully.')
             return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
 
@@ -515,6 +532,10 @@ class WalletManagementView(LoginRequiredMixin, View):
             else:
                 wallet.status = 'closed'
                 wallet.save()
+                NotificationService.notify_wallet_closed(
+                    user=request.user,
+                    wallet_number=wallet.wallet_number
+                )
                 messages.success(request, 'Wallet has been closed successfully.')
             return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
 
@@ -681,11 +702,20 @@ class SendMoneyView(LoginRequiredMixin, View):
                 wallet.save()
                 recipient.save()
                 
-                Notification.objects.create(
-                    user=recipient.user,
-                    transaction=tx,
-                    title='Money Received',
-                    message=f'You received {d["amount"]} {wallet.currency} from {request.user.full_name}.',
+                # Notify both sender and receiver
+                NotificationService.notify_transfer_sent(
+                    sender_user=request.user,
+                    receiver_user=recipient.user,
+                    amount=d['amount'],
+                    currency=wallet.currency,
+                    transaction=tx
+                )
+                NotificationService.notify_transfer_received(
+                    sender_user=request.user,
+                    receiver_user=recipient.user,
+                    amount=d['amount'],
+                    currency=wallet.currency,
+                    transaction=tx
                 )
                 Notification.objects.create(
                     user=request.user,
@@ -757,11 +787,14 @@ class TopupView(LoginRequiredMixin, View):
                 )
                 wallet.balance += d['amount']
                 wallet.save()
-                Notification.objects.create(
+                
+                # Notify user of successful top-up
+                NotificationService.notify_topup_completed(
                     user=request.user,
+                    amount=d['amount'],
+                    currency=wallet.currency,
                     transaction=tx,
-                    title='Wallet Topped Up',
-                    message=f'Your wallet has been credited with {d["amount"]} {wallet.currency}.',
+                    payment_method=payment_label
                 )
 
             success_message = f'ការបញ្ចូលលុយបានជោគជ័យ ចំនួន {d["amount"]} {wallet.currency}!'
@@ -826,6 +859,7 @@ class ProfileView(LoginRequiredMixin, View):
                     request.user.set_password(d['new_password'])
                     request.user.save()
                     auth_login(request, request.user)  # keep session alive
+                    NotificationService.notify_password_changed(user=request.user)
                     messages.success(request, 'Password changed successfully!')
                     return redirect('profile')
 
@@ -1238,6 +1272,7 @@ class KYCVerificationView(LoginRequiredMixin, View):
                 verification.verification_status = 'pending'
                 verification.verified_at = None
                 verification.save()
+                NotificationService.notify_kyc_submitted(user=request.user)
                 messages.success(request, 'KYC documents submitted successfully. Verification is pending.')
                 return redirect('kyc')
             except Exception:
@@ -1305,11 +1340,7 @@ class KYCReviewView(AdminRequiredMixin, View):
                 verification.verified_at = timezone.now()
                 verification.rejection_reason = None  # Clear any previous rejection reason
                 verification.save(update_fields=['verification_status', 'verified_at', 'rejection_reason'])
-                Notification.objects.create(
-                    user=verification.user,
-                    title='KYC Verified',
-                    message='Your identity verification has been approved. You can now send money and use all wallet features.',
-                )
+                NotificationService.notify_kyc_verified(user=verification.user)
                 messages.success(request, f'KYC for {verification.user.full_name} has been approved.')
             else:
                 messages.info(request, 'This submission is already approved.')
@@ -1324,10 +1355,9 @@ class KYCReviewView(AdminRequiredMixin, View):
                 verification.verified_at = None
                 verification.rejection_reason = rejection_reason
                 verification.save(update_fields=['verification_status', 'verified_at', 'rejection_reason'])
-                Notification.objects.create(
+                NotificationService.notify_kyc_rejected(
                     user=verification.user,
-                    title='KYC Rejected',
-                    message=f'Your identity verification has been rejected. Reason: {rejection_reason}',
+                    rejection_reason=rejection_reason
                 )
                 messages.success(request, f'KYC for {verification.user.full_name} has been rejected.')
             else:
@@ -1400,6 +1430,10 @@ class LoginView(APIView):
                 {'error': 'Your account is inactive. Please contact support.'},
                 status=status.HTTP_403_FORBIDDEN
             )
+
+        # Get IP address for security notification
+        ip_address = request.META.get('REMOTE_ADDR')
+        NotificationService.notify_login(user=user, ip_address=ip_address)
 
         refresh = RefreshToken.for_user(user)
         response = Response({
@@ -1479,6 +1513,7 @@ class ChangePasswordView(APIView):
 
         user.set_password(serializer.validated_data['new_password'])
         user.save()
+        NotificationService.notify_password_changed(user=user)
         return Response({'message': 'Password changed successfully.'}, status=status.HTTP_200_OK)
 
 
@@ -1541,10 +1576,122 @@ class MerchantQRViewSet(viewsets.ModelViewSet):
 class BillPaymentViewSet(viewsets.ModelViewSet):
     queryset = BillPayment.objects.all()
     serializer_class = BillPaymentSerializer
+    permission_classes = [IsAuthenticated]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        # Get wallet and validate
+        wallet_id = request.data.get('wallet')
+        wallet = get_object_or_404(Wallet, id=wallet_id, user=request.user)
+        
+        # Get transaction data
+        transaction_data = request.data.get('transaction', {})
+        amount = Decimal(str(transaction_data.get('amount', 0)))
+        
+        if wallet.balance < amount:
+            return Response(
+                {'error': 'Insufficient balance.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        with db_transaction.atomic():
+            # Create transaction
+            tx = Transaction.objects.create(
+                wallet=wallet,
+                transaction_type='bill_payment',
+                amount=amount,
+                status='completed',
+                description=transaction_data.get('description', ''),
+                reference=f'BILL-{uuid.uuid4().hex[:8].upper()}',
+            )
+            
+            # Create bill payment
+            bill_payment = BillPayment.objects.create(
+                transaction=tx,
+                bill_type=request.data.get('bill_type', ''),
+                account_reference=request.data.get('account_reference', ''),
+            )
+            
+            # Deduct from wallet
+            wallet.balance -= amount
+            wallet.save()
+            
+            # Notify user
+            NotificationService.notify_bill_payment_completed(
+                user=request.user,
+                amount=amount,
+                currency=wallet.currency,
+                transaction=tx,
+                bill_type=bill_payment.bill_type,
+                account_reference=bill_payment.account_reference
+            )
+        
+        return Response({
+            'message': 'Bill payment successful.',
+            'bill_payment': BillPaymentSerializer(bill_payment).data
+        }, status=status.HTTP_201_CREATED)
 
 class WithdrawalViewSet(viewsets.ModelViewSet):
     queryset = Withdrawal.objects.all()
     serializer_class = WithdrawalSerializer
+    permission_classes = [IsAuthenticated]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        # Get wallet and validate
+        wallet_id = request.data.get('wallet')
+        wallet = get_object_or_404(Wallet, id=wallet_id, user=request.user)
+        
+        # Get transaction data
+        transaction_data = request.data.get('transaction', {})
+        amount = Decimal(str(transaction_data.get('amount', 0)))
+        
+        if wallet.balance < amount:
+            return Response(
+                {'error': 'Insufficient balance.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        with db_transaction.atomic():
+            # Create transaction
+            tx = Transaction.objects.create(
+                wallet=wallet,
+                transaction_type='withdrawal',
+                amount=amount,
+                status='completed',
+                description=transaction_data.get('description', ''),
+                reference=f'WDR-{uuid.uuid4().hex[:8].upper()}',
+            )
+            
+            # Create withdrawal
+            withdrawal = Withdrawal.objects.create(
+                transaction=tx,
+                bank_name=request.data.get('bank_name', ''),
+                account_number=request.data.get('account_number', ''),
+            )
+            
+            # Deduct from wallet
+            wallet.balance -= amount
+            wallet.save()
+            
+            # Notify user
+            NotificationService.notify_withdrawal_completed(
+                user=request.user,
+                amount=amount,
+                currency=wallet.currency,
+                transaction=tx,
+                bank_name=withdrawal.bank_name,
+                account_number=withdrawal.account_number
+            )
+        
+        return Response({
+            'message': 'Withdrawal successful.',
+            'withdrawal': WithdrawalSerializer(withdrawal).data
+        }, status=status.HTTP_201_CREATED)
 
 class TopupViewSet(viewsets.ModelViewSet):
     queryset = Topup.objects.all()
@@ -2172,3 +2319,33 @@ class PasswordResetValidateTokenView(APIView):
             {'valid': True, 'email': user.email},
             status=status.HTTP_200_OK
         )
+
+
+class NotificationListView(LoginRequiredMixin, View):
+    """GET /notifications/ — View all user notifications."""
+    login_url = '/login/'
+    template_name = 'wallet/notifications.html'
+
+    def get(self, request):
+        notifications = (
+            Notification.objects
+            .filter(user=request.user)
+            .select_related('transaction')
+            .order_by('-created_at')
+        )
+        
+        # Get unread count
+        unread_count = notifications.filter(is_read=False).count()
+        
+        # Pagination (optional - show 20 per page)
+        from django.core.paginator import Paginator
+        paginator = Paginator(notifications, 20)
+        page_number = request.GET.get('page')
+        page_obj = paginator.get_page(page_number)
+        
+        ctx = {
+            'notifications': page_obj,
+            'unread_count': unread_count,
+            'active_page': 'notifications',
+        }
+        return render(request, self.template_name, ctx)
