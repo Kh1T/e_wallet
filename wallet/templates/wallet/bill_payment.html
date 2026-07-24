@@ -1,0 +1,236 @@
+{% extends 'wallet/base.html' %}
+{% block title %}Pay Bill — NexusPay{% endblock %}
+{% block page_title %}Pay Bill{% endblock %}
+
+{% block content %}
+<div class="max-w-xl mx-auto">
+  {% if not kyc_verified %}
+  <!-- KYC Required Warning -->
+  <div class="bg-amber-50 border border-amber-200 rounded-2xl p-6 mb-6">
+    <div class="flex items-start gap-4">
+      <div class="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center flex-shrink-0">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+        </svg>
+      </div>
+      <div>
+        <h3 class="text-lg font-bold text-amber-800 mb-1">KYC Verification Required</h3>
+        <p class="text-amber-700 text-sm mb-3">You need to complete KYC verification before you can pay bills.</p>
+        <a href="{% url 'kyc' %}" class="inline-flex items-center rounded-xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 transition">Complete KYC Verification</a>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+    <h2 class="text-lg font-bold text-slate-800 mb-4">Bill Payment Details</h2>
+
+    <div id="wallet-balance-display" class="bg-slate-50 rounded-xl p-4 mb-6 border border-slate-200">
+      <p class="text-sm text-slate-500">Available Balance</p>
+      <p class="text-2xl font-bold text-slate-800" id="display-balance">{{ wallet.currency|default:'KHR' }} {{ wallet.balance|default:'0' }}</p>
+      <p class="text-xs text-slate-400 font-mono mt-1" id="display-wallet-number">{{ wallet.wallet_number|default:'' }}</p>
+    </div>
+
+    <form method="post" id="bill-payment-form" class="space-y-5" {% if not kyc_verified or not has_pin %}onsubmit="return false;"{% endif %}>
+      {% csrf_token %}
+
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-2">From Wallet</label>
+        <select name="wallet" required
+                class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
+                {% if not kyc_verified or not has_pin %}disabled{% endif %}>
+          {% for w in wallets %}
+          <option value="{{ w.id }}" data-balance="{{ w.balance }}" data-currency="{{ w.currency }}" data-number="{{ w.wallet_number }}" {% if form.wallet.value == w.id|stringformat:'s' %}selected{% endif %}>
+            {{ w.currency }} — {{ w.wallet_number }} (Balance: {{ w.balance }})
+          </option>
+          {% endfor %}
+        </select>
+        {% if form.wallet.errors %}<p class="text-red-500 text-xs mt-1">{{ form.wallet.errors.0 }}</p>{% endif %}
+      </div>
+
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-2">Bill Type</label>
+        <select name="bill_type" required
+                class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
+                {% if not kyc_verified or not has_pin %}disabled{% endif %}>
+          {% for value, label in form.fields.bill_type.choices %}
+          <option value="{{ value }}" {% if form.bill_type.value == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        {% if form.bill_type.errors %}<p class="text-red-500 text-xs mt-1">{{ form.bill_type.errors.0 }}</p>{% endif %}
+      </div>
+
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-2">Biller (optional)</label>
+        <select name="biller"
+                class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
+                {% if not kyc_verified or not has_pin %}disabled{% endif %}>
+          {% for b in form.fields.biller.queryset %}
+          <option value="{{ b.id }}" {% if form.biller.value == b.id|stringformat:'s' %}selected{% endif %}>{{ b.biller_name }} {% if b.category %}({{ b.category }}){% endif %}</option>
+          {% endfor %}
+        </select>
+        {% if form.biller.errors %}<p class="text-red-500 text-xs mt-1">{{ form.biller.errors.0 }}</p>{% endif %}
+      </div>
+
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-2">Account / Customer Number</label>
+        <input type="text" name="account_reference" value="{{ form.account_reference.value|default:'' }}" required
+               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
+               {% if not kyc_verified or not has_pin %}disabled{% endif %}>
+        {% if form.account_reference.errors %}<p class="text-red-500 text-xs mt-1">{{ form.account_reference.errors.0 }}</p>{% endif %}
+      </div>
+
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-2">Amount (<span id="amount-currency">{{ wallet.currency|default:'KHR' }}</span>)</label>
+        <input type="number" name="amount" value="{{ form.amount.value|default:'' }}" step="0.01" min="0.01" required
+               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
+               {% if not kyc_verified or not has_pin %}disabled{% endif %}>
+        {% if form.amount.errors %}<p class="text-red-500 text-xs mt-1">{{ form.amount.errors.0 }}</p>{% endif %}
+      </div>
+
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-2">Description (Optional)</label>
+        <input type="text" name="description" value="{{ form.description.value|default:'' }}"
+               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
+               {% if not kyc_verified or not has_pin %}disabled{% endif %}>
+      </div>
+
+      <!-- Modal Backdrop Overlay -->
+      <div id="pin-modal" class="fixed inset-0 z-50 flex items-center justify-center hidden bg-slate-900/60 backdrop-blur-sm transition-all duration-300">
+        <!-- Modal Card -->
+        <div class="bg-white rounded-3xl p-6 shadow-xl border border-slate-100 max-w-md w-full mx-4 transition-all scale-95 opacity-0 duration-300" id="modal-card">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-bold text-slate-800">Security Verification</h3>
+            <button type="button" onclick="closePinModal()" class="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+
+          <div class="space-y-4">
+            <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+              <p class="text-xs text-slate-400">Total Bill Payment Amount</p>
+              <p class="text-xl font-bold text-slate-800" id="modal-amount-display">{{ wallet.currency|default:'KHR' }} 0.00</p>
+              <p class="text-xs text-slate-500 mt-1" id="modal-bill-type-display">Bill Type: -</p>
+              <p class="text-xs text-slate-500 mt-1" id="modal-account-display">Account: -</p>
+              <p class="text-xs text-slate-500 mt-1" id="modal-from-display">From Wallet: -</p>
+            </div>
+
+            <!-- PIN Input -->
+            <div>
+              <label class="block text-sm font-semibold text-slate-700 mb-2">Transaction PIN</label>
+              <input type="password" name="pin" id="pin-input" value="{{ form.pin.value|default:'' }}" placeholder="Enter 4-6 digit PIN"
+                     class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500"
+                     {% if not kyc_verified or not has_pin %}disabled{% endif %}>
+              {% if form.pin.errors %}<p class="text-red-500 text-xs mt-1">{{ form.pin.errors.0 }}</p>{% endif %}
+            </div>
+
+            <!-- OTP Input (Conditional) -->
+            {% if otp_challenge %}
+            <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 mt-2">
+              <label class="block text-sm font-semibold text-blue-900 mb-2">OTP Verification Code</label>
+              <input type="text" name="otp_code" value="{{ form.otp_code.value|default:'' }}" placeholder="Enter 6-digit OTP"
+                     class="w-full rounded-xl border border-blue-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500"
+                     {% if otp_challenge %}required{% endif %}>
+              {% if form.otp_code.errors %}<p class="text-red-500 text-xs mt-1">{{ form.otp_code.errors.0 }}</p>{% endif %}
+              <p class="text-xs text-blue-700 mt-2">Please enter the 6-digit code sent to your notifications.</p>
+            </div>
+            {% endif %}
+          </div>
+
+          <div class="flex gap-3 mt-6">
+            <button type="button" onclick="closePinModal()" class="flex-1 py-3 text-sm font-semibold text-slate-500 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 transition">Cancel</button>
+            <button type="submit" class="flex-1 py-3 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-lg shadow-blue-500/20 transition">Confirm Payment</button>
+          </div>
+        </div>
+      </div>
+
+      <button type="{% if kyc_verified and has_pin %}button{% else %}submit{% endif %}"
+              {% if kyc_verified and has_pin %}onclick="openPinModal()"{% endif %}
+              class="w-full inline-flex items-center justify-center rounded-xl {% if kyc_verified and has_pin %}bg-blue-600 hover:bg-blue-700{% else %}bg-slate-400 cursor-not-allowed{% endif %} px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/20 transition"
+              {% if not kyc_verified or not has_pin %}disabled{% endif %}>
+        {% if not kyc_verified %}
+          Complete KYC to Pay Bill
+        {% elif not has_pin %}
+          Setup PIN to Pay Bill
+        {% elif otp_challenge %}
+          Verify and Confirm Payment
+        {% else %}
+          Pay Bill
+        {% endif %}
+      </button>
+    </form>
+  </div>
+
+  <div class="mt-6 text-center">
+    <a href="{% url 'dashboard' %}" class="text-sm text-slate-500 hover:text-slate-700 transition">← Back to Dashboard</a>
+  </div>
+</div>
+
+<script>
+  const walletSelect = document.querySelector('select[name="wallet"]');
+  const displayBalance = document.getElementById('display-balance');
+  const displayNumber = document.getElementById('display-wallet-number');
+  const amountCurrency = document.getElementById('amount-currency');
+
+  function updateWalletDisplay() {
+      const option = walletSelect.options[walletSelect.selectedIndex];
+      if (!option) return;
+      const currency = option.dataset.currency;
+      const balance = option.dataset.balance;
+      const number = option.dataset.number;
+      displayBalance.textContent = `${currency} ${parseFloat(balance).toFixed(2)}`;
+      displayNumber.textContent = number;
+      amountCurrency.textContent = currency;
+  }
+
+  walletSelect.addEventListener('change', updateWalletDisplay);
+  updateWalletDisplay();
+
+  function openPinModal() {
+      const form = document.getElementById('bill-payment-form');
+      if (!form.reportValidity()) {
+          return;
+      }
+
+      const amount = document.querySelector('input[name="amount"]').value;
+      const billTypeSelect = document.querySelector('select[name="bill_type"]');
+      const billType = billTypeSelect.options[billTypeSelect.selectedIndex].text;
+      const account = document.querySelector('input[name="account_reference"]').value;
+      const option = walletSelect.options[walletSelect.selectedIndex];
+      const currency = option ? option.dataset.currency : "{{ wallet.currency|default:'KHR' }}";
+      const number = option ? option.dataset.number : "";
+
+      document.getElementById('modal-amount-display').innerText = `${currency} ${parseFloat(amount).toFixed(2)}`;
+      document.getElementById('modal-bill-type-display').innerText = `Bill Type: ${billType}`;
+      document.getElementById('modal-account-display').innerText = `Account: ${account}`;
+      document.getElementById('modal-from-display').innerText = `From Wallet: ${number}`;
+
+      const modal = document.getElementById('pin-modal');
+      const card = document.getElementById('modal-card');
+      modal.classList.remove('hidden');
+      setTimeout(() => {
+          card.classList.remove('scale-95', 'opacity-0');
+          card.classList.add('scale-100', 'opacity-100');
+          document.getElementById('pin-input').focus();
+      }, 50);
+  }
+
+  function closePinModal() {
+      const modal = document.getElementById('pin-modal');
+      const card = document.getElementById('modal-card');
+      card.classList.remove('scale-100', 'opacity-100');
+      card.classList.add('scale-95', 'opacity-0');
+      setTimeout(() => {
+          modal.classList.add('hidden');
+      }, 300);
+  }
+
+  {% if form.pin.errors or form.otp_code.errors or otp_challenge %}
+  document.addEventListener("DOMContentLoaded", () => {
+      openPinModal();
+  });
+  {% endif %}
+</script>
+{% endblock %}

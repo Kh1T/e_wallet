@@ -39,6 +39,7 @@ urlpatterns = [
     path('wallet-management/', views.WalletManagementView.as_view(), name='wallet_management'),
     path('send/',         views.SendMoneyView.as_view(),    name='send'),
     path('topup/',        views.TopupView.as_view(),        name='topup'),
+    path('bill-payment/', views.BillPaymentPageView.as_view(), name='bill_payment'),
     path('profile/',      views.ProfileView.as_view(),      name='profile'),
     path('kyc/',          views.KYCVerificationView.as_view(), name='kyc'),
     path('reports/',       views.UserReportsView.as_view(),   name='reports'),

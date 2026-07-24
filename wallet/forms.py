@@ -2,7 +2,7 @@ from django import forms
 from django.core.exceptions import ValidationError
 from decimal import Decimal
 
-from .models import Wallet
+from .models import Wallet, Biller
 
 
 class LoginForm(forms.Form):
@@ -180,3 +180,46 @@ class ResetPasswordForm(forms.Form):
         if cleaned.get('new_password') != cleaned.get('new_password2'):
             self.add_error('new_password2', 'Passwords do not match.')
         return cleaned
+
+
+class BillPaymentForm(forms.Form):
+    BILL_TYPE_CHOICES = [
+        ('electricity', 'Electricity'),
+        ('water', 'Water'),
+        ('internet', 'Internet'),
+        ('phone', 'Phone'),
+        ('tv', 'TV / Cable'),
+        ('insurance', 'Insurance'),
+        ('tax', 'Tax'),
+        ('other', 'Other'),
+    ]
+
+    wallet = forms.ModelChoiceField(
+        queryset=Wallet.objects.none(),
+        label='From Wallet',
+        empty_label=None,
+    )
+    biller = forms.ModelChoiceField(
+        queryset=Biller.objects.filter(status='active'),
+        label='Biller (optional)',
+        required=False,
+        empty_label='— Custom / Other —',
+    )
+    bill_type = forms.ChoiceField(choices=BILL_TYPE_CHOICES, label='Bill Type')
+    account_reference = forms.CharField(
+        max_length=255,
+        label='Account / Customer Number',
+    )
+    amount = forms.DecimalField(
+        min_value=Decimal('0.01'), max_digits=12, decimal_places=2, label='Amount'
+    )
+    description = forms.CharField(max_length=255, required=False)
+    pin = forms.CharField(
+        max_length=6, min_length=4, widget=forms.PasswordInput, label='Transaction PIN'
+    )
+    otp_code = forms.CharField(max_length=6, required=False, label='OTP Code')
+
+    def __init__(self, *args, user=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if user is not None:
+            self.fields['wallet'].queryset = Wallet.objects.filter(user=user)

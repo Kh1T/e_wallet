@@ -80,7 +80,7 @@ from .serializers import (
 from .forms import (
     LoginForm, RegisterForm, SendMoneyForm, TopupForm,
     ProfileUpdateForm, ChangePasswordForm, KYCVerificationForm,
-    WalletManagementForm, UpdateWalletForm,
+    WalletManagementForm, UpdateWalletForm, BillPaymentForm,
 )
 from .services import NotificationService
 
@@ -293,6 +293,7 @@ class DashboardView(LoginRequiredMixin, View):
             recent_transactions = (
                 Transaction.objects
                 .filter(wallet=wallet)
+                .select_related('billpayment')
                 .order_by('-created_at')[:6]
             )
             received_transfers = (
@@ -356,6 +357,7 @@ class TransactionListView(LoginRequiredMixin, View):
             transactions = (
                 Transaction.objects
                 .filter(wallet=wallet)
+                .select_related('billpayment')
                 .order_by('-created_at')
             )
             received_transfers = (
@@ -821,6 +823,201 @@ class TopupView(LoginRequiredMixin, View):
             'transaction_fee': self.fee_amount,
             'submission_token': request.session.get('topup_submission_token') or self._create_submission_token(request),
         })
+
+
+class BillPaymentPageView(LoginRequiredMixin, View):
+    """GET/POST /bill-payment/ — Pay a bill from the authenticated user's wallet."""
+    login_url = '/login/'
+    template_name = 'wallet/bill_payment.html'
+
+    def _prepare_context(self, request, form=None, wallet=None, wallets=None, kyc_verified=True, has_pin=True, otp_challenge=False):
+        security, _ = Security.objects.get_or_create(user=request.user)
+        wallets = wallets or Wallet.objects.filter(user=request.user)
+        wallet = wallet or wallets.first()
+        return {
+            'form': form or BillPaymentForm(user=request.user),
+            'wallets': wallets,
+            'wallet': wallet,
+            'kyc_verified': kyc_verified,
+            'has_pin': has_pin,
+            'otp_required': security.otp_enabled,
+            'otp_challenge': otp_challenge,
+            'active_page': 'bill_payment',
+        }
+
+    def get(self, request):
+        wallets = Wallet.objects.filter(user=request.user)
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        kyc_verified = bool(verification and verification.verification_status == 'verified')
+        security, _ = Security.objects.get_or_create(user=request.user)
+        has_pin = bool(security.pin_hash)
+
+        if not kyc_verified:
+            messages.warning(request, 'KYC verification is required to pay bills. Please complete your KYC verification.')
+        elif not has_pin:
+            messages.warning(request, 'You must set up a transaction PIN in your profile settings before paying bills.')
+
+        return render(request, self.template_name, self._prepare_context(
+            request, wallets=wallets, kyc_verified=kyc_verified, has_pin=has_pin
+        ))
+
+    def post(self, request):
+        wallets = Wallet.objects.filter(user=request.user)
+        form = BillPaymentForm(request.POST, user=request.user)
+
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        kyc_verified = bool(verification and verification.verification_status == 'verified')
+        security, _ = Security.objects.get_or_create(user=request.user)
+        has_pin = bool(security.pin_hash)
+
+        if not kyc_verified:
+            messages.error(request, 'KYC verification is required to pay bills. Please complete your KYC verification.')
+            return render(request, self.template_name, self._prepare_context(
+                request, form=form, wallets=wallets, kyc_verified=False, has_pin=has_pin
+            ))
+
+        if not has_pin:
+            messages.error(request, 'You must set up a transaction PIN in your profile settings before paying bills.')
+            return redirect('profile')
+
+        if not wallets.exists():
+            messages.error(request, 'You do not have a wallet yet.')
+            return redirect('dashboard')
+
+        wallet = wallets.filter(id=request.POST.get('wallet')).first() or wallets.first()
+
+        if form.is_valid():
+            d = form.cleaned_data
+            wallet = d['wallet']
+
+            # Verify PIN
+            from django.contrib.auth.hashers import check_password
+            if not check_password(d['pin'], security.pin_hash):
+                form.add_error('pin', 'Invalid transaction PIN.')
+                return render(request, self.template_name, self._prepare_context(
+                    request, form=form, wallet=wallet, wallets=wallets,
+                    kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=False
+                ))
+
+            # Verify OTP if enabled
+            if security.otp_enabled:
+                otp_code = d.get('otp_code')
+                if not otp_code:
+                    otp = str(random.randint(100000, 999999))
+                    security.temp_otp = otp
+                    security.temp_otp_expiry = timezone.now() + timezone.timedelta(minutes=5)
+                    security.save()
+
+                    Notification.objects.create(
+                        user=request.user,
+                        title='Bill Payment OTP Code',
+                        message=f'Your OTP code for bill payment is: {otp}',
+                    )
+                    messages.info(request, 'An OTP has been generated. Please check your notifications to verify.')
+
+                    return render(request, self.template_name, self._prepare_context(
+                        request, form=form, wallet=wallet, wallets=wallets,
+                        kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=True
+                    ))
+
+                if security.temp_otp != otp_code or security.temp_otp_expiry < timezone.now():
+                    form.add_error('otp_code', 'Invalid or expired OTP code.')
+                    return render(request, self.template_name, self._prepare_context(
+                        request, form=form, wallet=wallet, wallets=wallets,
+                        kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=True
+                    ))
+
+            # Clear temporary OTP once validation succeeds
+            if security.otp_enabled:
+                security.temp_otp = None
+                security.temp_otp_expiry = None
+                security.save()
+
+            # Check wallet status
+            if wallet.status != 'active':
+                form.add_error(None, 'Selected wallet is not active.')
+                return render(request, self.template_name, self._prepare_context(
+                    request, form=form, wallet=wallet, wallets=wallets,
+                    kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=False
+                ))
+
+            if wallet.balance < d['amount']:
+                form.add_error('amount', f'Insufficient balance. Available: {wallet.balance} {wallet.currency}')
+                return render(request, self.template_name, self._prepare_context(
+                    request, form=form, wallet=wallet, wallets=wallets,
+                    kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=False
+                ))
+
+            # Transaction limits
+            today = timezone.now().date()
+            daily_total = Transaction.objects.filter(
+                wallet=wallet,
+                transaction_type='bill_payment',
+                created_at__date=today
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+            limit, _ = TransactionLimit.objects.get_or_create(user=request.user)
+            if limit.daily_limit > 0 and daily_total + d['amount'] > limit.daily_limit:
+                form.add_error('amount', f'Daily bill payment limit exceeded. Limit: {limit.daily_limit}, Already paid: {daily_total}')
+                return render(request, self.template_name, self._prepare_context(
+                    request, form=form, wallet=wallet, wallets=wallets,
+                    kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=False
+                ))
+
+            month_start = today.replace(day=1)
+            monthly_total = Transaction.objects.filter(
+                wallet=wallet,
+                transaction_type='bill_payment',
+                created_at__date__gte=month_start
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+            if limit.monthly_limit > 0 and monthly_total + d['amount'] > limit.monthly_limit:
+                form.add_error('amount', f'Monthly bill payment limit exceeded. Limit: {limit.monthly_limit}, Already paid: {monthly_total}')
+                return render(request, self.template_name, self._prepare_context(
+                    request, form=form, wallet=wallet, wallets=wallets,
+                    kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=False
+                ))
+
+            with db_transaction.atomic():
+                tx = Transaction.objects.create(
+                    wallet=wallet,
+                    biller=d.get('biller'),
+                    transaction_type='bill_payment',
+                    amount=d['amount'],
+                    status='completed',
+                    description=d.get('description', f'Bill payment for {d["account_reference"]}'),
+                    reference=f'BILL-{uuid.uuid4().hex[:8].upper()}',
+                )
+                bill_payment = BillPayment.objects.create(
+                    transaction=tx,
+                    bill_type=d['bill_type'],
+                    account_reference=d['account_reference'],
+                )
+                wallet.balance -= d['amount']
+                wallet.save()
+
+                NotificationService.notify_bill_payment_completed(
+                    user=request.user,
+                    amount=d['amount'],
+                    currency=wallet.currency,
+                    transaction=tx,
+                    bill_type=bill_payment.bill_type,
+                    account_reference=bill_payment.account_reference
+                )
+                AuditLog.objects.create(
+                    user=request.user,
+                    action=f'Bill payment {d["amount"]} {wallet.currency} for {bill_payment.bill_type} account {bill_payment.account_reference}',
+                    ip_address=request.META.get('REMOTE_ADDR'),
+                )
+
+            messages.success(
+                request,
+                f'Successfully paid {d["amount"]} {wallet.currency} for {bill_payment.bill_type} bill (Account: {bill_payment.account_reference}).'
+            )
+            return redirect('dashboard')
+
+        return render(request, self.template_name, self._prepare_context(
+            request, form=form, wallet=wallet, wallets=wallets,
+            kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=False
+        ))
 
 
 class ProfileView(LoginRequiredMixin, View):
@@ -1591,46 +1788,134 @@ class BillPaymentViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        # Get wallet and validate
-        wallet_id = request.data.get('wallet')
-        wallet = get_object_or_404(Wallet, id=wallet_id, user=request.user)
-        
-        # Get transaction data
-        transaction_data = request.data.get('transaction', {})
-        amount = Decimal(str(transaction_data.get('amount', 0)))
-        
-        if wallet.balance < amount:
+        data = request.data
+
+        # KYC verification required
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        if not (verification and verification.verification_status == 'verified'):
             return Response(
-                {'error': 'Insufficient balance.'},
+                {'error': 'KYC verification is required to pay bills. Please complete your KYC verification.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Security setup required
+        security, _ = Security.objects.get_or_create(user=request.user)
+        if not security.pin_hash:
+            return Response(
+                {'error': 'Please set up a transaction PIN in your security settings before paying bills.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        pin = data.get('pin')
+        if not pin:
+            return Response({'error': 'Transaction PIN is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from django.contrib.auth.hashers import check_password
+        if not check_password(pin, security.pin_hash):
+            return Response({'error': 'Invalid transaction PIN.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # OTP verification
+        if security.otp_enabled:
+            otp = data.get('otp')
+            if not otp:
+                otp_val = str(random.randint(100000, 999999))
+                security.temp_otp = otp_val
+                security.temp_otp_expiry = timezone.now() + timezone.timedelta(minutes=5)
+                security.save()
+
+                Notification.objects.create(
+                    user=request.user,
+                    title='Bill Payment OTP Code',
+                    message=f'Your OTP code for bill payment is: {otp_val}',
+                )
+                return Response({
+                    'error': 'OTP verification required.',
+                    'otp_required': True
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            if security.temp_otp != otp or security.temp_otp_expiry < timezone.now():
+                return Response({'error': 'Invalid or expired OTP code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            security.temp_otp = None
+            security.temp_otp_expiry = None
+            security.save()
+
+        # Wallet validation
+        wallet_id = data.get('wallet')
+        try:
+            wallet = Wallet.objects.get(id=wallet_id, user=request.user)
+        except (Wallet.DoesNotExist, ValueError, TypeError):
+            return Response({'error': 'Wallet not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if wallet.status != 'active':
+            return Response({'error': 'Wallet is not active.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        amount = Decimal(str(data.get('amount', 0)))
+        if amount <= 0:
+            return Response({'error': 'Invalid amount.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if wallet.balance < amount:
+            return Response(
+                {'error': f'Insufficient balance. Available: {wallet.balance} {wallet.currency}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Transaction limits
+        today = timezone.now().date()
+        daily_total = Transaction.objects.filter(
+            wallet=wallet,
+            transaction_type='bill_payment',
+            created_at__date=today
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        limit, _ = TransactionLimit.objects.get_or_create(user=request.user)
+        if limit.daily_limit > 0 and daily_total + amount > limit.daily_limit:
+            return Response(
+                {'error': f'Daily bill payment limit exceeded. Limit: {limit.daily_limit}, Already paid: {daily_total}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        month_start = today.replace(day=1)
+        monthly_total = Transaction.objects.filter(
+            wallet=wallet,
+            transaction_type='bill_payment',
+            created_at__date__gte=month_start
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        if limit.monthly_limit > 0 and monthly_total + amount > limit.monthly_limit:
+            return Response(
+                {'error': f'Monthly bill payment limit exceeded. Limit: {limit.monthly_limit}, Already paid: {monthly_total}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        bill_type = data.get('bill_type', '')
+        account_reference = data.get('account_reference', '')
+        description = data.get('description', f'Bill payment for {account_reference}')
+
+        try:
+            biller_id = data.get('biller')
+            biller = Biller.objects.get(id=biller_id, status='active') if biller_id else None
+        except (Biller.DoesNotExist, ValueError, TypeError):
+            biller = None
+
         with db_transaction.atomic():
-            # Create transaction
             tx = Transaction.objects.create(
                 wallet=wallet,
+                biller=biller,
                 transaction_type='bill_payment',
                 amount=amount,
                 status='completed',
-                description=transaction_data.get('description', ''),
+                description=description,
                 reference=f'BILL-{uuid.uuid4().hex[:8].upper()}',
             )
-            
-            # Create bill payment
+
             bill_payment = BillPayment.objects.create(
                 transaction=tx,
-                bill_type=request.data.get('bill_type', ''),
-                account_reference=request.data.get('account_reference', ''),
+                bill_type=bill_type,
+                account_reference=account_reference,
             )
-            
-            # Deduct from wallet
+
             wallet.balance -= amount
             wallet.save()
-            
-            # Notify user
+
             NotificationService.notify_bill_payment_completed(
                 user=request.user,
                 amount=amount,
@@ -1639,10 +1924,16 @@ class BillPaymentViewSet(viewsets.ModelViewSet):
                 bill_type=bill_payment.bill_type,
                 account_reference=bill_payment.account_reference
             )
-        
+            AuditLog.objects.create(
+                user=request.user,
+                action=f'Bill payment {amount} {wallet.currency} for {bill_payment.bill_type} account {bill_payment.account_reference}',
+                ip_address=request.META.get('REMOTE_ADDR'),
+            )
+
         return Response({
             'message': 'Bill payment successful.',
-            'bill_payment': BillPaymentSerializer(bill_payment).data
+            'bill_payment': BillPaymentSerializer(bill_payment).data,
+            'transaction': TransactionSerializer(tx).data,
         }, status=status.HTTP_201_CREATED)
 
 class WithdrawalViewSet(viewsets.ModelViewSet):
