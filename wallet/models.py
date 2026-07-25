@@ -41,6 +41,9 @@ class Biller(models.Model):
     status = models.CharField(max_length=50, default='active')
     created_at = models.DateTimeField(auto_now_add=True)
 
+    def __str__(self):
+        return self.biller_name
+
 class Transaction(models.Model):
     wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name='transactions')
     merchant = models.ForeignKey(Merchant, on_delete=models.SET_NULL, null=True, blank=True)
@@ -53,8 +56,19 @@ class Transaction(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 class Notification(models.Model):
+    NOTIFICATION_TYPES = [
+        ('transfer', 'Transfer'),
+        ('bill_payment', 'Bill Payment'),
+        ('topup', 'Top Up'),
+        ('withdrawal', 'Withdrawal'),
+        ('security', 'Security'),
+        ('kyc', 'KYC'),
+        ('wallet', 'Wallet'),
+        ('system', 'System'),
+    ]
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     transaction = models.ForeignKey(Transaction, on_delete=models.SET_NULL, null=True, blank=True)
+    notification_type = models.CharField(max_length=50, choices=NOTIFICATION_TYPES, default='system')
     title = models.CharField(max_length=255)
     message = models.TextField(null=True, blank=True)
     is_read = models.BooleanField(default=False)

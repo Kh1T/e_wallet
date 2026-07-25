@@ -39,6 +39,7 @@ class NotificationService:
         Notification.objects.create(
             user=sender_user,
             transaction=transaction,
+            notification_type='transfer',
             title='Money Sent',
             message=f'You sent {amount} {currency} to {receiver_user.full_name}.',
         )
@@ -58,6 +59,7 @@ class NotificationService:
         Notification.objects.create(
             user=receiver_user,
             transaction=transaction,
+            notification_type='transfer',
             title='Money Received',
             message=f'You received {amount} {currency} from {sender_user.full_name}.',
         )
@@ -77,6 +79,7 @@ class NotificationService:
         Notification.objects.create(
             user=user,
             transaction=transaction,
+            notification_type='topup',
             title='Wallet Topped Up',
             message=f'Your wallet has been credited with {amount} {currency} via {payment_method}.',
         )
@@ -98,6 +101,7 @@ class NotificationService:
         Notification.objects.create(
             user=user,
             transaction=transaction,
+            notification_type='withdrawal',
             title='Withdrawal Processed',
             message=f'Your withdrawal of {amount} {currency} to {bank_name} (•••{masked_account}) has been processed.',
         )
@@ -119,6 +123,7 @@ class NotificationService:
         Notification.objects.create(
             user=user,
             transaction=transaction,
+            notification_type='withdrawal',
             title='Withdrawal Initiated',
             message=f'Your withdrawal request of {amount} {currency} to {bank_name} (•••{masked_account}) is being processed.',
         )
@@ -139,6 +144,7 @@ class NotificationService:
         Notification.objects.create(
             user=user,
             transaction=transaction,
+            notification_type='bill_payment',
             title='Bill Payment Successful',
             message=f'Your {bill_type} bill payment of {amount} {currency} for account {account_reference} was successful.',
         )
@@ -158,6 +164,7 @@ class NotificationService:
         Notification.objects.create(
             user=user,
             transaction=transaction,
+            notification_type='transfer',
             title='Payment Successful',
             message=f'Your payment of {amount} {currency} to {merchant_name} was successful.',
         )
@@ -181,6 +188,7 @@ class NotificationService:
         
         Notification.objects.create(
             user=user,
+            notification_type='security',
             title='New Login Detected',
             message=f'A new login to your account was detected{location_info}{device}. If this was not you, please change your password immediately.',
         )
@@ -195,6 +203,7 @@ class NotificationService:
         """
         Notification.objects.create(
             user=user,
+            notification_type='security',
             title='Password Changed',
             message='Your password has been changed successfully. If you did not make this change, please contact support immediately.',
         )
@@ -209,6 +218,7 @@ class NotificationService:
         """
         Notification.objects.create(
             user=user,
+            notification_type='security',
             title='PIN Changed',
             message='Your wallet PIN has been changed successfully.',
         )
@@ -223,6 +233,7 @@ class NotificationService:
         """
         Notification.objects.create(
             user=user,
+            notification_type='security',
             title='Two-Factor Authentication Enabled',
             message='Two-factor authentication has been enabled for your account. This adds an extra layer of security.',
         )
@@ -237,6 +248,7 @@ class NotificationService:
         """
         Notification.objects.create(
             user=user,
+            notification_type='security',
             title='Two-Factor Authentication Disabled',
             message='Two-factor authentication has been disabled for your account. Consider re-enabling it for better security.',
         )
@@ -254,6 +266,7 @@ class NotificationService:
         detail_msg = f" Details: {details}" if details else ""
         Notification.objects.create(
             user=user,
+            notification_type='security',
             title='Suspicious Activity Detected',
             message=f'We detected {activity_type} on your account.{detail_msg} Please review your account activity and contact support if you did not authorize this.',
         )
@@ -273,6 +286,7 @@ class NotificationService:
         """
         Notification.objects.create(
             user=user,
+            notification_type='wallet',
             title='Wallet Frozen',
             message=f'Your wallet {wallet_number} has been frozen. You cannot perform transactions until it is unfrozen. Contact support for assistance.',
         )
@@ -288,6 +302,7 @@ class NotificationService:
         """
         Notification.objects.create(
             user=user,
+            notification_type='wallet',
             title='Wallet Unfrozen',
             message=f'Your wallet {wallet_number} has been unfrozen. You can now perform transactions normally.',
         )
@@ -303,6 +318,7 @@ class NotificationService:
         """
         Notification.objects.create(
             user=user,
+            notification_type='wallet',
             title='Wallet Closed',
             message=f'Your wallet {wallet_number} has been closed. This action is irreversible.',
         )
@@ -319,6 +335,7 @@ class NotificationService:
         """
         Notification.objects.create(
             user=user,
+            notification_type='wallet',
             title='Wallet Created',
             message=f'Your new {currency} wallet ({wallet_number}) has been created successfully.',
         )
@@ -337,6 +354,7 @@ class NotificationService:
         """
         Notification.objects.create(
             user=user,
+            notification_type='kyc',
             title='KYC Verified',
             message='Your identity verification has been approved. You can now send money and use all wallet features.',
         )
@@ -352,6 +370,7 @@ class NotificationService:
         """
         Notification.objects.create(
             user=user,
+            notification_type='kyc',
             title='KYC Rejected',
             message=f'Your identity verification has been rejected. Reason: {rejection_reason}',
         )
@@ -366,6 +385,7 @@ class NotificationService:
         """
         Notification.objects.create(
             user=user,
+            notification_type='kyc',
             title='KYC Submitted',
             message='Your identity verification documents have been submitted and are pending review.',
         )
@@ -388,6 +408,7 @@ class NotificationService:
         """
         Notification.objects.create(
             user=user,
+            notification_type='system',
             title='Transaction Failed',
             message=f'Your {transaction_type} of {amount} {currency} failed. Reason: {reason}',
         )
@@ -404,6 +425,7 @@ class NotificationService:
         """
         Notification.objects.create(
             user=user,
+            notification_type='system',
             title='Low Balance Alert',
             message=f'Your wallet {wallet.wallet_number} balance is running low ({wallet.balance} {wallet.currency}). Consider topping up.',
         )
@@ -420,6 +442,7 @@ class NotificationService:
         """
         Notification.objects.create(
             user=user,
+            notification_type='system',
             title=title,
             message=message,
         )

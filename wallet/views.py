@@ -830,14 +830,19 @@ class BillPaymentPageView(LoginRequiredMixin, View):
     login_url = '/login/'
     template_name = 'wallet/bill_payment.html'
 
-    def _prepare_context(self, request, form=None, wallet=None, wallets=None, kyc_verified=True, has_pin=True, otp_challenge=False):
+    def _prepare_context(self, request, form=None, wallet=None, wallets=None, billers=None, categories=None, kyc_verified=True, has_pin=True, otp_challenge=False):
         security, _ = Security.objects.get_or_create(user=request.user)
         wallets = wallets or Wallet.objects.filter(user=request.user)
         wallet = wallet or wallets.first()
+        billers = billers or Biller.objects.filter(status='active')
+        # Get unique categories from active billers
+        categories = categories or Biller.objects.filter(status='active').exclude(category__isnull=True).exclude(category='').values_list('category', flat=True).distinct().order_by('category')
         return {
             'form': form or BillPaymentForm(user=request.user),
             'wallets': wallets,
             'wallet': wallet,
+            'billers': billers,
+            'categories': categories,
             'kyc_verified': kyc_verified,
             'has_pin': has_pin,
             'otp_required': security.otp_enabled,
@@ -847,6 +852,8 @@ class BillPaymentPageView(LoginRequiredMixin, View):
 
     def get(self, request):
         wallets = Wallet.objects.filter(user=request.user)
+        billers = Biller.objects.filter(status='active')
+        categories = Biller.objects.filter(status='active').exclude(category__isnull=True).exclude(category='').values_list('category', flat=True).distinct().order_by('category')
         verification = IdentityVerification.objects.filter(user=request.user).first()
         kyc_verified = bool(verification and verification.verification_status == 'verified')
         security, _ = Security.objects.get_or_create(user=request.user)
@@ -858,7 +865,7 @@ class BillPaymentPageView(LoginRequiredMixin, View):
             messages.warning(request, 'You must set up a transaction PIN in your profile settings before paying bills.')
 
         return render(request, self.template_name, self._prepare_context(
-            request, wallets=wallets, kyc_verified=kyc_verified, has_pin=has_pin
+            request, wallets=wallets, billers=billers, categories=categories, kyc_verified=kyc_verified, has_pin=has_pin
         ))
 
     def post(self, request):
@@ -977,19 +984,22 @@ class BillPaymentPageView(LoginRequiredMixin, View):
                 ))
 
             with db_transaction.atomic():
+                biller = d.get('biller')
+                bill_type = biller.category.lower().replace(' ', '_').replace('/', '_') if biller and biller.category else 'other'
+                account_reference = biller.account_number if biller else 'N/A'
                 tx = Transaction.objects.create(
                     wallet=wallet,
-                    biller=d.get('biller'),
+                    biller=biller,
                     transaction_type='bill_payment',
                     amount=d['amount'],
                     status='completed',
-                    description=d.get('description', f'Bill payment for {d["account_reference"]}'),
+                    description=d.get('description', f'Bill payment for {account_reference}'),
                     reference=f'BILL-{uuid.uuid4().hex[:8].upper()}',
                 )
                 bill_payment = BillPayment.objects.create(
                     transaction=tx,
-                    bill_type=d['bill_type'],
-                    account_reference=d['account_reference'],
+                    bill_type=bill_type,
+                    account_reference=account_reference,
                 )
                 wallet.balance -= d['amount']
                 wallet.save()
@@ -1886,15 +1896,17 @@ class BillPaymentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        bill_type = data.get('bill_type', '')
-        account_reference = data.get('account_reference', '')
-        description = data.get('description', f'Bill payment for {account_reference}')
-
         try:
             biller_id = data.get('biller')
             biller = Biller.objects.get(id=biller_id, status='active') if biller_id else None
         except (Biller.DoesNotExist, ValueError, TypeError):
-            biller = None
+            return Response({'error': 'Biller not found or inactive.'}, status=status.HTTP_404_NOT_FOUND)
+
+        bill_type = biller.category.lower().replace(' ', '_').replace('/', '_') if biller and biller.category else 'other'
+        account_reference = biller.account_number if biller else 'N/A'
+        description = data.get('description', '')
+        if not description:
+            description = f'Bill payment for {account_reference}'
 
         with db_transaction.atomic():
             tx = Transaction.objects.create(

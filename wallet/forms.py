@@ -183,17 +183,6 @@ class ResetPasswordForm(forms.Form):
 
 
 class BillPaymentForm(forms.Form):
-    BILL_TYPE_CHOICES = [
-        ('electricity', 'Electricity'),
-        ('water', 'Water'),
-        ('internet', 'Internet'),
-        ('phone', 'Phone'),
-        ('tv', 'TV / Cable'),
-        ('insurance', 'Insurance'),
-        ('tax', 'Tax'),
-        ('other', 'Other'),
-    ]
-
     wallet = forms.ModelChoiceField(
         queryset=Wallet.objects.none(),
         label='From Wallet',
@@ -201,14 +190,9 @@ class BillPaymentForm(forms.Form):
     )
     biller = forms.ModelChoiceField(
         queryset=Biller.objects.filter(status='active'),
-        label='Biller (optional)',
-        required=False,
-        empty_label='— Custom / Other —',
-    )
-    bill_type = forms.ChoiceField(choices=BILL_TYPE_CHOICES, label='Bill Type')
-    account_reference = forms.CharField(
-        max_length=255,
-        label='Account / Customer Number',
+        label='Biller',
+        required=True,
+        empty_label='Select a biller',
     )
     amount = forms.DecimalField(
         min_value=Decimal('0.01'), max_digits=12, decimal_places=2, label='Amount'

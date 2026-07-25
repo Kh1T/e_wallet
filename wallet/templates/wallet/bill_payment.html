@@ -48,36 +48,39 @@
         {% if form.wallet.errors %}<p class="text-red-500 text-xs mt-1">{{ form.wallet.errors.0 }}</p>{% endif %}
       </div>
 
+      <!-- Category Selection -->
       <div>
-        <label class="block text-sm font-semibold text-slate-700 mb-2">Bill Type</label>
-        <select name="bill_type" required
+        <label class="block text-sm font-semibold text-slate-700 mb-2">Category</label>
+        <select id="category-select" required
                 class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
                 {% if not kyc_verified or not has_pin %}disabled{% endif %}>
-          {% for value, label in form.fields.bill_type.choices %}
-          <option value="{{ value }}" {% if form.bill_type.value == value %}selected{% endif %}>{{ label }}</option>
+          <option value="">Select category</option>
+          {% for cat in categories %}
+          <option value="{{ cat }}">{{ cat }}</option>
           {% endfor %}
         </select>
-        {% if form.bill_type.errors %}<p class="text-red-500 text-xs mt-1">{{ form.bill_type.errors.0 }}</p>{% endif %}
       </div>
 
+      <!-- Biller Selection (filtered by category) -->
       <div>
-        <label class="block text-sm font-semibold text-slate-700 mb-2">Biller (optional)</label>
-        <select name="biller"
+        <label class="block text-sm font-semibold text-slate-700 mb-2">Biller</label>
+        <select name="biller" id="biller-select" required
                 class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
                 {% if not kyc_verified or not has_pin %}disabled{% endif %}>
-          {% for b in form.fields.biller.queryset %}
-          <option value="{{ b.id }}" {% if form.biller.value == b.id|stringformat:'s' %}selected{% endif %}>{{ b.biller_name }} {% if b.category %}({{ b.category }}){% endif %}</option>
+          <option value="">Select a biller</option>
+          {% for b in billers %}
+          <option value="{{ b.id }}" data-category="{{ b.category|default:'' }}" data-account="{{ b.account_number|default:'' }}" {% if form.biller.value == b.id|stringformat:'s' %}selected{% endif %}>
+            {{ b.biller_name }}
+          </option>
           {% endfor %}
         </select>
         {% if form.biller.errors %}<p class="text-red-500 text-xs mt-1">{{ form.biller.errors.0 }}</p>{% endif %}
       </div>
 
-      <div>
-        <label class="block text-sm font-semibold text-slate-700 mb-2">Account / Customer Number</label>
-        <input type="text" name="account_reference" value="{{ form.account_reference.value|default:'' }}" required
-               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
-               {% if not kyc_verified or not has_pin %}disabled{% endif %}>
-        {% if form.account_reference.errors %}<p class="text-red-500 text-xs mt-1">{{ form.account_reference.errors.0 }}</p>{% endif %}
+      <!-- Display selected biller's account number -->
+      <div id="biller-account-display" class="hidden bg-amber-50 border border-amber-200 rounded-xl p-4">
+        <p class="text-xs text-amber-600 font-semibold uppercase tracking-wide">Biller Account Number</p>
+        <p class="text-lg font-mono font-bold text-amber-800 mt-1" id="selected-biller-account">—</p>
       </div>
 
       <div>
@@ -113,6 +116,7 @@
               <p class="text-xs text-slate-400">Total Bill Payment Amount</p>
               <p class="text-xl font-bold text-slate-800" id="modal-amount-display">{{ wallet.currency|default:'KHR' }} 0.00</p>
               <p class="text-xs text-slate-500 mt-1" id="modal-bill-type-display">Bill Type: -</p>
+              <p class="text-xs text-slate-500 mt-1" id="modal-biller-display">Biller: -</p>
               <p class="text-xs text-slate-500 mt-1" id="modal-account-display">Account: -</p>
               <p class="text-xs text-slate-500 mt-1" id="modal-from-display">From Wallet: -</p>
             </div>
@@ -170,9 +174,16 @@
 
 <script>
   const walletSelect = document.querySelector('select[name="wallet"]');
+  const categorySelect = document.getElementById('category-select');
+  const billerSelect = document.getElementById('biller-select');
+  const billerAccountDisplay = document.getElementById('biller-account-display');
+  const selectedBillerAccount = document.getElementById('selected-biller-account');
   const displayBalance = document.getElementById('display-balance');
   const displayNumber = document.getElementById('display-wallet-number');
   const amountCurrency = document.getElementById('amount-currency');
+
+  // Store all biller options for filtering
+  const allBillerOptions = Array.from(billerSelect.options).slice(1); // Skip the first "Select a biller" option
 
   function updateWalletDisplay() {
       const option = walletSelect.options[walletSelect.selectedIndex];
@@ -185,8 +196,77 @@
       amountCurrency.textContent = currency;
   }
 
+  function filterBillersByCategory() {
+      const selectedCategory = categorySelect.value;
+      const currentBillerValue = billerSelect.value;
+
+      // Clear current options
+      billerSelect.innerHTML = '<option value="">Select a biller</option>';
+
+      if (!selectedCategory) {
+          // Disable biller select if no category selected
+          billerSelect.disabled = true;
+          billerAccountDisplay.classList.add('hidden');
+          return;
+      }
+
+      // Filter and add matching billers
+      let hasMatchingBillers = false;
+      allBillerOptions.forEach(option => {
+          if (option.dataset.category === selectedCategory) {
+              billerSelect.appendChild(option.cloneNode(true));
+              hasMatchingBillers = true;
+          }
+      });
+
+      // Enable biller select
+      billerSelect.disabled = false;
+
+      // Restore selection if still valid
+      if (currentBillerValue) {
+          const stillAvailable = Array.from(billerSelect.options).some(opt => opt.value === currentBillerValue);
+          if (stillAvailable) {
+              billerSelect.value = currentBillerValue;
+          }
+      }
+
+      // Show message if no billers available
+      if (!hasMatchingBillers) {
+          const noOption = document.createElement('option');
+          noOption.value = "";
+          noOption.textContent = `No billers available for ${selectedCategory}`;
+          billerSelect.appendChild(noOption);
+          billerSelect.disabled = true;
+      }
+
+      updateBillerDisplay();
+  }
+
+  function updateBillerDisplay() {
+      const option = billerSelect.options[billerSelect.selectedIndex];
+      if (!option || option.value === '') {
+          billerAccountDisplay.classList.add('hidden');
+          selectedBillerAccount.textContent = '—';
+          return;
+      }
+      const accountNumber = option.dataset.account;
+      if (accountNumber) {
+          billerAccountDisplay.classList.remove('hidden');
+          selectedBillerAccount.textContent = accountNumber;
+      } else {
+          billerAccountDisplay.classList.add('hidden');
+          selectedBillerAccount.textContent = '—';
+      }
+  }
+
+  // Event listeners
   walletSelect.addEventListener('change', updateWalletDisplay);
+  categorySelect.addEventListener('change', filterBillersByCategory);
+  billerSelect.addEventListener('change', updateBillerDisplay);
+
+  // Initialize
   updateWalletDisplay();
+  filterBillersByCategory();
 
   function openPinModal() {
       const form = document.getElementById('bill-payment-form');
@@ -195,16 +275,18 @@
       }
 
       const amount = document.querySelector('input[name="amount"]').value;
-      const billTypeSelect = document.querySelector('select[name="bill_type"]');
-      const billType = billTypeSelect.options[billTypeSelect.selectedIndex].text;
-      const account = document.querySelector('input[name="account_reference"]').value;
+      const categoryText = categorySelect.options[categorySelect.selectedIndex].text;
+      const billerOption = billerSelect.options[billerSelect.selectedIndex];
+      const billerName = billerOption ? billerOption.text : '—';
+      const billerAccount = billerOption ? billerOption.dataset.account : '—';
       const option = walletSelect.options[walletSelect.selectedIndex];
       const currency = option ? option.dataset.currency : "{{ wallet.currency|default:'KHR' }}";
       const number = option ? option.dataset.number : "";
 
       document.getElementById('modal-amount-display').innerText = `${currency} ${parseFloat(amount).toFixed(2)}`;
-      document.getElementById('modal-bill-type-display').innerText = `Bill Type: ${billType}`;
-      document.getElementById('modal-account-display').innerText = `Account: ${account}`;
+      document.getElementById('modal-bill-type-display').innerText = `Category: ${categoryText}`;
+      document.getElementById('modal-biller-display').innerText = `Biller: ${billerName}`;
+      document.getElementById('modal-account-display').innerText = `Account: ${billerAccount}`;
       document.getElementById('modal-from-display').innerText = `From Wallet: ${number}`;
 
       const modal = document.getElementById('pin-modal');

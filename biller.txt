@@ -1,0 +1,207 @@
+# NexusPay E-Wallet - Biller Accounts and User Credentials
+# =========================================================
+# Generated: 2026-07-24
+# 
+# INSTRUCTIONS:
+# 1. Create these billers in Django Admin (/admin/wallet/biller/)
+# 2. Create the user in Django Admin (/admin/wallet/user/)
+# 3. Or use the Django shell commands below
+
+
+# =========================================================
+# BILLER ACCOUNTS
+# =========================================================
+
+## Electricity Billers
+---------------------
+Biller Name: Electricite du Cambodge (EDC)
+Category: Electricity
+Account Number: 1234567890
+Status: active
+
+Biller Name: Cambodia Electricity (CE)
+Category: Electricity
+Account Number: ELEC-2024-001
+Status: active
+
+## Water Billers
+----------------
+Biller Name: Phnom Penh Water Supply Authority (PPWSA)
+Category: Water
+Account Number: 9876543210
+Status: active
+
+Biller Name: Siem Reap Water Supply
+Category: Water
+Account Number: WATER-SR-001
+Status: active
+
+## Internet Billers
+-------------------
+Biller Name: Metfone Internet
+Category: Internet
+Account Number: META-INT-001
+Status: active
+
+Biller Name: Cellcard Internet
+Category: Internet
+Account Number: CELL-INT-002
+Status: active
+
+Biller Name: Smart Internet
+Category: Internet
+Account Number: SMART-NET-003
+Status: active
+
+## Phone/Mobile Billers
+-----------------------
+Biller Name: Metfone Mobile
+Category: Phone
+Account Number: META-MOB-001
+Status: active
+
+Biller Name: Cellcard Mobile
+Category: Phone
+Account Number: CELL-MOB-002
+Status: active
+
+Biller Name: Smart Mobile
+Category: Phone
+Account Number: SMART-MOB-003
+Status: active
+
+## TV/Cable Billers
+-------------------
+Biller Name: Cambodian Television (CTV)
+Category: TV
+Account Number: CTV-SUB-001
+Status: active
+
+Biller Name: PPCTV
+Category: TV
+Account Number: PPCTV-2024-001
+Status: active
+
+## Insurance Billers
+--------------------
+Biller Name: Forte Insurance
+Category: Insurance
+Account Number: FORTE-INS-001
+Status: active
+
+Biller Name: Cambodia Life Insurance
+Category: Insurance
+Account Number: CAM-LIFE-001
+Status: active
+
+## Tax Billers
+--------------
+Biller Name: General Department of Taxation
+Category: Tax
+Account Number: GDT-TAX-001
+Status: active
+
+
+# =========================================================
+# USER ACCOUNT FOR LOGIN
+# =========================================================
+
+User Type: Customer
+--------------------
+Full Name: John Doe
+Email: john@example.com
+Phone: +85512345678
+Username: john@example.com
+Password: TestPass123!
+Role: customer
+Status: active
+
+Note: After creating this user, you need to:
+1. Create a wallet for this user
+2. Complete KYC verification (upload ID documents)
+3. Set up transaction PIN in profile
+
+
+# =========================================================
+# DJANGO SHELL COMMANDS (Optional)
+# =========================================================
+# Run these in Django shell (python manage.py shell)
+
+"""
+from wallet.models import Biller, User
+from django.contrib.auth.hashers import make_password
+
+# Create Billers
+billers_data = [
+    {"biller_name": "Electricite du Cambodge (EDC)", "category": "Electricity", "account_number": "1234567890"},
+    {"biller_name": "Cambodia Electricity (CE)", "category": "Electricity", "account_number": "ELEC-2024-001"},
+    {"biller_name": "Phnom Penh Water Supply Authority (PPWSA)", "category": "Water", "account_number": "9876543210"},
+    {"biller_name": "Siem Reap Water Supply", "category": "Water", "account_number": "WATER-SR-001"},
+    {"biller_name": "Metfone Internet", "category": "Internet", "account_number": "META-INT-001"},
+    {"biller_name": "Cellcard Internet", "category": "Internet", "account_number": "CELL-INT-002"},
+    {"biller_name": "Smart Internet", "category": "Internet", "account_number": "SMART-NET-003"},
+    {"biller_name": "Metfone Mobile", "category": "Phone", "account_number": "META-MOB-001"},
+    {"biller_name": "Cellcard Mobile", "category": "Phone", "account_number": "CELL-MOB-002"},
+    {"biller_name": "Smart Mobile", "category": "Phone", "account_number": "SMART-MOB-003"},
+    {"biller_name": "Cambodian Television (CTV)", "category": "TV", "account_number": "CTV-SUB-001"},
+    {"biller_name": "PPCTV", "category": "TV", "account_number": "PPCTV-2024-001"},
+    {"biller_name": "Forte Insurance", "category": "Insurance", "account_number": "FORTE-INS-001"},
+    {"biller_name": "Cambodia Life Insurance", "category": "Insurance", "account_number": "CAM-LIFE-001"},
+    {"biller_name": "General Department of Taxation", "category": "Tax", "account_number": "GDT-TAX-001"},
+]
+
+for data in billers_data:
+    Biller.objects.get_or_create(
+        biller_name=data["biller_name"],
+        defaults={
+            "category": data["category"],
+            "account_number": data["account_number"],
+            "status": "active"
+        }
+    )
+
+print("Billers created successfully!")
+
+# Create User
+user, created = User.objects.get_or_create(
+    email="john@example.com",
+    defaults={
+        "username": "john@example.com",
+        "full_name": "John Doe",
+        "phone": "+85512345678",
+        "role": "customer",
+        "status": "active"
+    }
+)
+
+if created:
+    user.set_password("TestPass123!")
+    user.save()
+    print(f"User created: {user.email}")
+else:
+    print(f"User already exists: {user.email}")
+"""
+
+
+# =========================================================
+# ADMIN PANEL ACCESS
+# =========================================================
+
+Django Admin URL: http://127.0.0.1:8000/admin/
+Create Superuser: python manage.py createsuperuser
+
+
+# =========================================================
+# LOGIN CREDENTIALS SUMMARY
+# =========================================================
+
+Email:    john@example.com
+Password: TestPass123!
+
+After login:
+1. Go to "Pay Bill" in the sidebar
+2. Select Category (e.g., Electricity)
+3. Only billers of that category will show in the Biller dropdown
+4. Select Biller (e.g., Electricite du Cambodge)
+5. The account number will be displayed automatically
+6. Enter amount and confirm payment
