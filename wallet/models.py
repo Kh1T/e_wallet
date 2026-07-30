@@ -35,6 +35,7 @@ class Merchant(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 class Biller(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True, related_name='biller_profile')
     biller_name = models.CharField(max_length=255)
     category = models.CharField(max_length=100, null=True, blank=True)
     account_number = models.CharField(max_length=100, null=True, blank=True)
@@ -43,6 +44,19 @@ class Biller(models.Model):
 
     def __str__(self):
         return self.biller_name
+
+    @property
+    def wallet(self):
+        """Get the biller's wallet (if they have a user account)."""
+        if self.user:
+            return self.user.wallets.first()
+        return None
+
+    @property
+    def balance(self):
+        """Get the biller's wallet balance."""
+        wallet = self.wallet
+        return wallet.balance if wallet else Decimal('0.00')
 
 class Transaction(models.Model):
     wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name='transactions')

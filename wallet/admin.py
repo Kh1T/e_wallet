@@ -531,9 +531,26 @@ class MerchantAdmin(admin.ModelAdmin):
 
 @admin.register(Biller)
 class BillerAdmin(admin.ModelAdmin):
-    list_display = ('biller_name', 'category', 'account_number', 'status', 'created_at')
+    list_display = ('biller_name', 'category', 'account_number', 'wallet_balance', 'user_info', 'status', 'created_at')
     list_filter = ('category', 'status', 'created_at')
     search_fields = ('biller_name', 'account_number')
+    raw_id_fields = ('user',)
+
+    def wallet_balance(self, obj):
+        """Display biller's wallet balance."""
+        if obj.user:
+            wallet = obj.user.wallets.first()
+            if wallet:
+                return f"{wallet.balance} {wallet.currency}"
+        return "—"
+    wallet_balance.short_description = 'Wallet Balance'
+
+    def user_info(self, obj):
+        """Display linked user info."""
+        if obj.user:
+            return f"{obj.user.full_name} ({obj.user.email})"
+        return "—"
+    user_info.short_description = 'Linked User'
 
 
 @admin.register(Topup)

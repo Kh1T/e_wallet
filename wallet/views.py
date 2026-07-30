@@ -987,6 +987,11 @@ class BillPaymentPageView(LoginRequiredMixin, View):
                 biller = d.get('biller')
                 bill_type = biller.category.lower().replace(' ', '_').replace('/', '_') if biller and biller.category else 'other'
                 account_reference = biller.account_number if biller else 'N/A'
+                
+                # Get biller's wallet (if they have a user account)
+                biller_wallet = biller.wallet if biller and biller.user else None
+                
+                # Create transaction for customer
                 tx = Transaction.objects.create(
                     wallet=wallet,
                     biller=biller,
@@ -1001,8 +1006,35 @@ class BillPaymentPageView(LoginRequiredMixin, View):
                     bill_type=bill_type,
                     account_reference=account_reference,
                 )
+                
+                # Deduct from customer wallet
                 wallet.balance -= d['amount']
                 wallet.save()
+                
+                # Credit biller's wallet (if they have one)
+                if biller_wallet:
+                    biller_wallet.balance += d['amount']
+                    biller_wallet.save()
+                    
+                    # Create transaction record for biller
+                    biller_tx = Transaction.objects.create(
+                        wallet=biller_wallet,
+                        biller=biller,
+                        transaction_type='bill_payment_received',
+                        amount=d['amount'],
+                        status='completed',
+                        description=f'Payment received from {request.user.full_name} for {account_reference}',
+                        reference=f'BILL-RCV-{uuid.uuid4().hex[:8].upper()}',
+                    )
+                    
+                    # Notify biller
+                    Notification.objects.create(
+                        user=biller.user,
+                        transaction=biller_tx,
+                        notification_type='bill_payment',
+                        title='Payment Received',
+                        message=f'You received {d["amount"]} {wallet.currency} from {request.user.full_name} for bill payment.',
+                    )
 
                 NotificationService.notify_bill_payment_completed(
                     user=request.user,
@@ -1909,6 +1941,9 @@ class BillPaymentViewSet(viewsets.ModelViewSet):
             description = f'Bill payment for {account_reference}'
 
         with db_transaction.atomic():
+            # Get biller's wallet (if they have a user account)
+            biller_wallet = biller.wallet if biller and biller.user else None
+            
             tx = Transaction.objects.create(
                 wallet=wallet,
                 biller=biller,
@@ -1925,8 +1960,34 @@ class BillPaymentViewSet(viewsets.ModelViewSet):
                 account_reference=account_reference,
             )
 
+            # Deduct from customer wallet
             wallet.balance -= amount
             wallet.save()
+            
+            # Credit biller's wallet (if they have one)
+            if biller_wallet:
+                biller_wallet.balance += amount
+                biller_wallet.save()
+                
+                # Create transaction record for biller
+                biller_tx = Transaction.objects.create(
+                    wallet=biller_wallet,
+                    biller=biller,
+                    transaction_type='bill_payment_received',
+                    amount=amount,
+                    status='completed',
+                    description=f'Payment received from {request.user.full_name} for {account_reference}',
+                    reference=f'BILL-RCV-{uuid.uuid4().hex[:8].upper()}',
+                )
+                
+                # Notify biller
+                Notification.objects.create(
+                    user=biller.user,
+                    transaction=biller_tx,
+                    notification_type='bill_payment',
+                    title='Payment Received',
+                    message=f'You received {amount} {wallet.currency} from {request.user.full_name} for bill payment.',
+                )
 
             NotificationService.notify_bill_payment_completed(
                 user=request.user,
