@@ -37,8 +37,18 @@ ALLOWED_HOSTS = ['*']
 # HTTPS development tunnel used to test the app from mobile devices.
 CSRF_TRUSTED_ORIGINS = [
     'https://sector-ritzy-degrease.ngrok-free.dev',
+    'http://127.0.0.1',
+    'http://localhost',
 ]
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# CSRF Cookie settings
+CSRF_COOKIE_SECURE = False  # Set to True in production with HTTPS
+CSRF_COOKIE_HTTPONLY = False  # Must be False for JavaScript to access it
+CSRF_COOKIE_SAMESITE = 'Lax'
+CSRF_USE_SESSIONS = False  # Use cookie-based CSRF tokens
+SESSION_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_SECURE = False  # Set to True in production with HTTPS
 
 
 # Application definition
