@@ -149,7 +149,7 @@
 
       <!-- Logo + Toggle -->
       <div class="flex items-center justify-between px-4 py-5 border-b border-slate-700/50">
-        <div class="flex items-center gap-3 sidebar-logo">
+        <div class="flex items-center gap-3 sidebar-logo cursor-pointer" id="sidebar-logo-toggle" title="Toggle Sidebar">
           <div class="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center flex-shrink-0">
             <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
               <path d="M21 7H3a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zm-1 12H4V9h16v10z"/><path d="M16 13h2v2h-2z"/><path d="M5 3h14a1 1 0 0 1 1 1v1H4V4a1 1 0 0 1 1-1z"/>
@@ -157,11 +157,6 @@
           </div>
           <span class="text-white font-extrabold text-lg tracking-tight sidebar-logo-text">NexusPay</span>
         </div>
-        <button id="sidebar-toggle" class="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-all" title="Toggle Sidebar">
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/>
-          </svg>
-        </button>
       </div>
 
       <!-- Navigation -->
@@ -408,6 +403,16 @@
   {% endif %}
 
   <style>
+    /* Hide scrollbar for Chrome, Safari and Opera */
+    #sidebar nav::-webkit-scrollbar {
+      display: none;
+    }
+    /* Hide scrollbar for IE, Edge and Firefox */
+    #sidebar nav {
+      -ms-overflow-style: none;  /* IE and Edge */
+      scrollbar-width: none;  /* Firefox */
+    }
+
     /* Sidebar Collapsed State */
     #sidebar.collapsed {
       width: 72px;
@@ -429,9 +434,6 @@
     }
     #sidebar.collapsed .sidebar-user {
       justify-content: center;
-    }
-    #sidebar.collapsed #sidebar-toggle svg {
-      transform: rotate(180deg);
     }
     #main-content.sidebar-collapsed {
       margin-left: 72px;
@@ -496,7 +498,7 @@
     (function() {
       const sidebar = document.getElementById('sidebar');
       const mainContent = document.getElementById('main-content');
-      const toggleBtn = document.getElementById('sidebar-toggle');
+      const logoToggle = document.getElementById('sidebar-logo-toggle');
       const mobileToggleBtn = document.getElementById('mobile-sidebar-toggle');
 
       // Load saved state
@@ -506,9 +508,9 @@
         mainContent.classList.add('sidebar-collapsed');
       }
 
-      // Desktop toggle
-      if (toggleBtn) {
-        toggleBtn.addEventListener('click', () => {
+      // Logo click toggle (desktop)
+      if (logoToggle) {
+        logoToggle.addEventListener('click', () => {
           sidebar.classList.toggle('collapsed');
           mainContent.classList.toggle('sidebar-collapsed');
           localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));

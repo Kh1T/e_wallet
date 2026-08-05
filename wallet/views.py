@@ -81,6 +81,7 @@ from .forms import (
     LoginForm, RegisterForm, SendMoneyForm, TopupForm,
     ProfileUpdateForm, ChangePasswordForm, KYCVerificationForm,
     WalletManagementForm, UpdateWalletForm, BillPaymentForm,
+    ChangePinForm, ForgotPasswordForm, ResetPasswordForm,
 )
 from .services import NotificationService
 
@@ -302,15 +303,26 @@ class DashboardView(LoginRequiredMixin, View):
                 .select_related('transaction', 'sender_wallet__user')
                 .order_by('-created_at')[:6]
             )
-            total_expense = (
-                Transaction.objects
-                .filter(wallet=wallet, created_at__gte=month_start)
-                .aggregate(t=Sum('amount'))['t'] or Decimal('0')
-            )
+            # Calculate income: received transfers + topups
             total_income = (
                 Transfer.objects
                 .filter(receiver_wallet=wallet, created_at__gte=month_start)
                 .aggregate(t=Sum('transaction__amount'))['t'] or Decimal('0')
+            ) + (
+                Transaction.objects
+                .filter(wallet=wallet, transaction_type='topup', created_at__gte=month_start)
+                .aggregate(t=Sum('amount'))['t'] or Decimal('0')
+            )
+            
+            # Calculate expense: transfers sent + bill payments
+            total_expense = (
+                Transaction.objects
+                .filter(wallet=wallet, transaction_type='transfer', created_at__gte=month_start)
+                .aggregate(t=Sum('amount'))['t'] or Decimal('0')
+            ) + (
+                Transaction.objects
+                .filter(wallet=wallet, transaction_type='bill_payment', created_at__gte=month_start)
+                .aggregate(t=Sum('amount'))['t'] or Decimal('0')
             )
 
         ctx = {
