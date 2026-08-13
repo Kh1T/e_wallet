@@ -26,29 +26,30 @@ load_dotenv(BASE_DIR / '.env')
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-p4b0qb%_(_=8t72h4u^n#pncosyu0x89rx21!p&%rx8brjntwl'
+# Production values are supplied by Railway; the fallback keeps local development usable.
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-local-development-only')
+DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+ALLOWED_HOSTS = [
+    value.strip()
+    for value in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+    if value.strip()
+]
 
-ALLOWED_HOSTS = ['*']
-
-# HTTPS development tunnel used to test the app from mobile devices.
 CSRF_TRUSTED_ORIGINS = [
-    'https://sector-ritzy-degrease.ngrok-free.dev',
-    'http://127.0.0.1',
-    'http://localhost',
+    value.strip()
+    for value in os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',')
+    if value.strip()
 ]
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # CSRF Cookie settings
-CSRF_COOKIE_SECURE = False  # Set to True in production with HTTPS
+CSRF_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_HTTPONLY = False  # Must be False for JavaScript to access it
 CSRF_COOKIE_SAMESITE = 'Lax'
 CSRF_USE_SESSIONS = False  # Use cookie-based CSRF tokens
 SESSION_COOKIE_SAMESITE = 'Lax'
-SESSION_COOKIE_SECURE = False  # Set to True in production with HTTPS
+SESSION_COOKIE_SECURE = not DEBUG
 
 
 # Application definition
@@ -85,6 +86,7 @@ SIMPLE_JWT = {
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -118,11 +120,13 @@ WSGI_APPLICATION = 'e_wallet_project.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
+DATABASE_URL = os.getenv('DATABASE_URL')
 DATABASES = {
     'default': dj_database_url.config(
-        default=f'sqlite:///{BASE_DIR / "db.sqlite3"}',
+        default=DATABASE_URL or f'sqlite:///{BASE_DIR / "db.sqlite3"}',
         conn_max_age=600,
         conn_health_checks=True,
+        **({'ssl_require': True} if DATABASE_URL else {}),
     )
 }
 
@@ -161,7 +165,13 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+STORAGES = {
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
+}
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 

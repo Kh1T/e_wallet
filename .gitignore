@@ -31,8 +31,8 @@ PSQL/
 *.backup
 
 # Static files
-# (Uncomment the line below if you are collecting static files)
-# staticfiles/
+# Collected production static files
+staticfiles/
 # static/
 
 # Python packaging / build output
