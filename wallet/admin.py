@@ -14,6 +14,18 @@ from .models import (
     User, Merchant, Biller, Topup, Withdrawal, BillPayment,
     Security, TransactionLimit, AuditLog
 )
+from .cloudinary_utils import is_cloudinary_url
+
+
+def get_image_url(obj, field_name):
+    """Get image URL whether it's a Cloudinary URL or local path."""
+    url = getattr(obj, field_name, None)
+    if not url:
+        return None
+    if is_cloudinary_url(url):
+        return url
+    # Local media file
+    return f'{settings.MEDIA_URL}{url}'
 
 
 def approve_kyc(modeladmin, request, queryset):
@@ -137,37 +149,41 @@ class IdentityVerificationAdmin(admin.ModelAdmin):
     )
 
     def id_document_preview(self, obj):
-        if obj.id_document:
+        url = get_image_url(obj, 'id_document')
+        if url:
             return format_html(
                 '<a href="{0}" target="_blank"><img src="{0}" style="max-height: 50px; max-width: 100px; border-radius: 4px;" /></a>',
-                f'{settings.MEDIA_URL}{obj.id_document}'
+                url
             )
         return '—'
     id_document_preview.short_description = 'ID Document'
 
     def selfie_preview(self, obj):
-        if obj.selfie_image:
+        url = get_image_url(obj, 'selfie_image')
+        if url:
             return format_html(
                 '<a href="{0}" target="_blank"><img src="{0}" style="max-height: 50px; max-width: 100px; border-radius: 4px;" /></a>',
-                f'{settings.MEDIA_URL}{obj.selfie_image}'
+                url
             )
         return '—'
     selfie_preview.short_description = 'Selfie'
 
     def id_document_image(self, obj):
-        if obj.id_document:
+        url = get_image_url(obj, 'id_document')
+        if url:
             return format_html(
                 '<a href="{0}" target="_blank"><img src="{0}" style="max-height: 300px; max-width: 100%; border-radius: 8px; border: 1px solid #ddd;" /><br><small>Click to view full size</small></a>',
-                f'{settings.MEDIA_URL}{obj.id_document}'
+                url
             )
         return 'No ID document uploaded'
     id_document_image.short_description = 'ID Document Preview'
 
     def selfie_image_display(self, obj):
-        if obj.selfie_image:
+        url = get_image_url(obj, 'selfie_image')
+        if url:
             return format_html(
                 '<a href="{0}" target="_blank"><img src="{0}" style="max-height: 300px; max-width: 100%; border-radius: 8px; border: 1px solid #ddd;" /><br><small>Click to view full size</small></a>',
-                f'{settings.MEDIA_URL}{obj.selfie_image}'
+                url
             )
         return 'No selfie uploaded'
     selfie_image_display.short_description = 'Selfie Preview'
