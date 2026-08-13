@@ -48,7 +48,7 @@ A Django wallet application built with Django REST Framework and Tailwind CSS.
    - The project will use SQLite by default via `db.sqlite3`.
    - To use PostgreSQL or another database, create a `.env` file in the project root with:
      ```dotenv
-     DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/DBNAME
+     DATABASE_URL=<your-supabase-postgresql-connection-url>
      ```
 
 ## Database setup
