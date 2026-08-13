@@ -23,6 +23,11 @@ import random
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 
+from .cloudinary_utils import (
+    upload_kyc_id_document,
+    upload_kyc_selfie,
+    is_cloudinary_url,
+)
 from .email_utils import (
     generate_reset_token,
     send_password_reset_email,
@@ -1477,22 +1482,32 @@ class KYCVerificationView(LoginRequiredMixin, View):
             id_document = d['id_document']
             
             try:
-                # Handle ID document
-                id_path = default_storage.save(
-                    f'kyc/{request.user.id}/id_document_{uuid.uuid4().hex[:8]}.{id_document.name.split(".")[-1]}',
-                    id_document
-                )
+                # Upload ID document to Cloudinary
+                id_upload_result = upload_kyc_id_document(id_document, request.user.id)
+                if not id_upload_result:
+                    form.add_error('id_document', 'Failed to upload ID document. Please try again.')
+                    return render(request, self.template_name, {
+                        'form': form,
+                        'verification': verification,
+                        'active_page': 'kyc',
+                    })
+                id_document_url = id_upload_result['secure_url']
                 
                 # Handle selfie - either from file upload or camera capture
                 selfie_image = d.get('selfie_image')
                 selfie_image_data = request.POST.get('selfie_image_data')
                 
                 if selfie_image:
-                    # File upload
-                    selfie_path = default_storage.save(
-                        f'kyc/{request.user.id}/selfie_{uuid.uuid4().hex[:8]}.{selfie_image.name.split(".")[-1]}',
-                        selfie_image
-                    )
+                    # File upload to Cloudinary
+                    selfie_upload_result = upload_kyc_selfie(selfie_image, request.user.id)
+                    if not selfie_upload_result:
+                        form.add_error('selfie_image', 'Failed to upload selfie. Please try again.')
+                        return render(request, self.template_name, {
+                            'form': form,
+                            'verification': verification,
+                            'active_page': 'kyc',
+                        })
+                    selfie_image_url = selfie_upload_result['secure_url']
                 elif selfie_image_data:
                     # Camera capture - base64 data
                     import base64
@@ -1506,13 +1521,18 @@ class KYCVerificationView(LoginRequiredMixin, View):
                         imgstr = selfie_image_data
                         ext = 'jpg'
                     
-                    # Decode base64 and save
+                    # Decode base64 and upload to Cloudinary
                     image_data = base64.b64decode(imgstr)
-                    file_name = f'selfie_{uuid.uuid4().hex[:8]}.{ext}'
-                    selfie_path = default_storage.save(
-                        f'kyc/{request.user.id}/{file_name}',
-                        ContentFile(image_data)
-                    )
+                    image_file = ContentFile(image_data, name=f'selfie_{request.user.id}.{ext}')
+                    selfie_upload_result = upload_kyc_selfie(image_file, request.user.id)
+                    if not selfie_upload_result:
+                        form.add_error('selfie_image', 'Failed to upload selfie. Please try again.')
+                        return render(request, self.template_name, {
+                            'form': form,
+                            'verification': verification,
+                            'active_page': 'kyc',
+                        })
+                    selfie_image_url = selfie_upload_result['secure_url']
                 else:
                     form.add_error('selfie_image', 'Please provide a selfie image.')
                     return render(request, self.template_name, {
@@ -1525,15 +1545,18 @@ class KYCVerificationView(LoginRequiredMixin, View):
                 verification.address = d['address']
                 verification.nationality = d['nationality']
                 verification.national_id = d['national_id']
-                verification.id_document = id_path
-                verification.selfie_image = selfie_path
+                verification.id_document = id_document_url
+                verification.selfie_image = selfie_image_url
                 verification.verification_status = 'pending'
                 verification.verified_at = None
                 verification.save()
                 NotificationService.notify_kyc_submitted(user=request.user)
                 messages.success(request, 'KYC documents submitted successfully. Verification is pending.')
                 return redirect('kyc')
-            except Exception:
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"KYC submission error: {str(e)}")
                 form.add_error('national_id', 'This National ID is already registered with another account.')
 
         return render(request, self.template_name, {

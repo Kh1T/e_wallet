@@ -118,12 +118,31 @@
 
               <!-- Camera Mode -->
               <div id="camera-mode" class="space-y-4">
+                <!-- Camera Error Banner -->
+                <div id="camera-error-banner" class="hidden rounded-xl bg-amber-50 border border-amber-200 p-4">
+                  <div class="flex items-start gap-3">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                      <line x1="12" y1="9" x2="12" y2="13"/>
+                      <line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                    <div class="flex-1">
+                      <p class="text-sm font-medium text-amber-800">Camera Access Issue</p>
+                      <p class="text-xs text-amber-700 mt-1" id="camera-error-message">Unable to access camera. Please use the upload option instead.</p>
+                      <button type="button" onclick="switchSelfieMode('upload')" class="mt-2 text-xs font-semibold text-amber-800 underline hover:no-underline">
+                        Switch to Upload Mode
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
                 <div class="relative bg-black rounded-xl overflow-hidden" style="min-height: 300px;">
                   <video id="camera-video" class="w-full h-auto max-h-[400px]" autoplay playsinline></video>
                   <canvas id="camera-canvas" class="hidden"></canvas>
-                  <div id="camera-placeholder" class="absolute inset-0 flex flex-col items-center justify-center text-white">
+                  <div id="camera-placeholder" class="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-800">
                     <svg xmlns="http://www.w3.org/2000/svg" class="w-16 h-16 mb-2 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-                    <p class="text-sm opacity-75">Camera preview will appear here</p>
+                    <p class="text-sm opacity-75 mb-2">Camera preview will appear here</p>
+                    <p class="text-xs opacity-50 text-center px-4">Click "Start Camera" to begin, or switch to "Upload File" if camera doesn't work</p>
                   </div>
                   <img id="captured-photo" class="hidden w-full h-auto max-h-[400px]" alt="Captured selfie">
                 </div>
@@ -198,28 +217,106 @@
   }
 
   async function startCamera() {
+    const video = document.getElementById('camera-video');
+    const placeholder = document.getElementById('camera-placeholder');
+    const startBtn = document.getElementById('btn-start-camera');
+    const errorBanner = document.getElementById('camera-error-banner');
+    const errorMessageEl = document.getElementById('camera-error-message');
+    
+    // Hide any previous error
+    if (errorBanner) {
+      errorBanner.classList.add('hidden');
+    }
+    
+    // Check if getUserMedia is supported
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      const msg = 'Your browser does not support camera access. Please use a modern browser like Chrome, Firefox, or Safari, or use the upload option instead.';
+      console.error('getUserMedia not supported');
+      if (errorBanner && errorMessageEl) {
+        errorMessageEl.textContent = msg;
+        errorBanner.classList.remove('hidden');
+      } else {
+        alert(msg);
+      }
+      return;
+    }
+    
+    // Check if running in secure context (HTTPS or localhost)
+    if (!window.isSecureContext) {
+      const msg = 'Camera access requires a secure connection (HTTPS). Please use the upload option instead.';
+      console.error('Not in secure context');
+      if (errorBanner && errorMessageEl) {
+        errorMessageEl.textContent = msg;
+        errorBanner.classList.remove('hidden');
+      } else {
+        alert(msg);
+      }
+      return;
+    }
+    
     try {
-      const video = document.getElementById('camera-video');
-      const placeholder = document.getElementById('camera-placeholder');
-
-      stream = await navigator.mediaDevices.getUserMedia({
+      // Try to get camera with ideal constraints
+      const constraints = {
         video: {
-          facingMode: 'user',
+          facingMode: { ideal: 'user' },
           width: { ideal: 1280 },
           height: { ideal: 720 }
         },
         audio: false
-      });
-
+      };
+      
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      
       video.srcObject = stream;
       placeholder.classList.add('hidden');
       video.classList.remove('hidden');
-
-      document.getElementById('btn-start-camera').classList.add('hidden');
+      
+      startBtn.classList.add('hidden');
       document.getElementById('btn-capture').classList.remove('hidden');
     } catch (err) {
-      alert('Could not access camera. Please make sure you have granted camera permissions or use the upload option instead.');
       console.error('Camera error:', err);
+      
+      // Show error banner
+      const errorBanner = document.getElementById('camera-error-banner');
+      const errorMessageEl = document.getElementById('camera-error-message');
+      
+      // Provide specific error messages based on error type
+      let errorMessage = 'Unable to access camera. ';
+      
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        errorMessage += 'Camera permission was denied. Please allow camera access in your browser settings, or use the upload option instead.';
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        errorMessage += 'No camera found on your device. Please use the upload option instead.';
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        errorMessage += 'Camera is already in use by another application. Please close other apps using the camera, or use the upload option instead.';
+      } else if (err.name === 'OverconstrainedError') {
+        // Try again with simpler constraints
+        try {
+          console.log('Retrying with simpler constraints...');
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          video.srcObject = stream;
+          placeholder.classList.add('hidden');
+          video.classList.remove('hidden');
+          startBtn.classList.add('hidden');
+          document.getElementById('btn-capture').classList.remove('hidden');
+          return;
+        } catch (retryErr) {
+          errorMessage += 'Camera does not support the required resolution. Please use the upload option instead.';
+        }
+      } else {
+        errorMessage += 'Please make sure you have granted camera permissions or use the upload option instead.';
+      }
+      
+      // Show error banner instead of alert
+      if (errorBanner && errorMessageEl) {
+        errorMessageEl.textContent = errorMessage;
+        errorBanner.classList.remove('hidden');
+      } else {
+        alert(errorMessage);
+      }
+      
+      // Keep the camera mode visible but show error, let user switch manually
+      // or they can click the "Switch to Upload Mode" button
     }
   }
 

@@ -181,6 +181,18 @@ FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 # ── Default primary key field type ────────────────────────────────
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# ── Cloudinary Configuration ──────────────────────────────────────
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
+
+cloudinary.config(
+    cloud_name=os.getenv('CLOUDINARY_KEY_NAME', ''),
+    api_key=os.getenv('CLOUDINARY_API_KEY', ''),
+    api_secret=os.getenv('CLOUDINARY_API_SECRET', ''),
+    secure=True
+)
+
 # ── Bakong Payment Configuration ───────────────────────────────────
 BAKONG_TOKEN = os.getenv('BAKONG_TOKEN', '')
 BAKONG_ACCOUNT_ID = os.getenv('BAKONG_ACCOUNT_ID', '')

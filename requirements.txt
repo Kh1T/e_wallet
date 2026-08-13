@@ -7,3 +7,4 @@ python-dotenv>=1.0,<2.0
 resend>=0.8.0
 qrcode>=7.4.2
 pillow>=10.0.0
+cloudinary>=1.36.0
