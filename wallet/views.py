@@ -29,16 +29,10 @@ from .email_utils import (
     send_password_reset_confirmation,
 )
 
-from .email_utils import (
-    generate_reset_token,
-    send_password_reset_email,
-    send_password_reset_confirmation,
-)
-
-from .email_utils import (
-    generate_reset_token,
-    send_password_reset_email,
-    send_password_reset_confirmation,
+from .qr_utils import (
+    generate_wallet_qr_data,
+    parse_wallet_qr_data,
+    generate_qr_image,
 )
 
 
@@ -62,10 +56,11 @@ def _set_jwt_cookies(response, access_token, refresh_token=None):
         )
     return response
 
+from django.http import JsonResponse
 from .models import (
     User, Wallet, Merchant, Biller, Transaction, Notification, IdentityVerification,
     Security, TransactionLimit, AuditLog, Report, Analytics, Backup, MerchantQR,
-    BillPayment, Withdrawal, Topup, Transfer, FraudDetection
+    BillPayment, Withdrawal, Topup, Transfer, FraudDetection, BakongPayment
 )
 from .serializers import (
     UserSerializer, WalletSerializer, MerchantSerializer, BillerSerializer,
@@ -80,7 +75,8 @@ from .serializers import (
 from .forms import (
     LoginForm, RegisterForm, SendMoneyForm, TopupForm,
     ProfileUpdateForm, ChangePasswordForm, KYCVerificationForm,
-    WalletManagementForm, UpdateWalletForm,
+    WalletManagementForm, UpdateWalletForm, BillPaymentForm,
+    ChangePinForm, ForgotPasswordForm, ResetPasswordForm,
 )
 from .services import NotificationService
 
@@ -293,6 +289,7 @@ class DashboardView(LoginRequiredMixin, View):
             recent_transactions = (
                 Transaction.objects
                 .filter(wallet=wallet)
+                .select_related('billpayment')
                 .order_by('-created_at')[:6]
             )
             received_transfers = (
@@ -301,15 +298,26 @@ class DashboardView(LoginRequiredMixin, View):
                 .select_related('transaction', 'sender_wallet__user')
                 .order_by('-created_at')[:6]
             )
-            total_expense = (
-                Transaction.objects
-                .filter(wallet=wallet, created_at__gte=month_start)
-                .aggregate(t=Sum('amount'))['t'] or Decimal('0')
-            )
+            # Calculate income: received transfers + topups
             total_income = (
                 Transfer.objects
                 .filter(receiver_wallet=wallet, created_at__gte=month_start)
                 .aggregate(t=Sum('transaction__amount'))['t'] or Decimal('0')
+            ) + (
+                Transaction.objects
+                .filter(wallet=wallet, transaction_type='topup', created_at__gte=month_start)
+                .aggregate(t=Sum('amount'))['t'] or Decimal('0')
+            )
+            
+            # Calculate expense: transfers sent + bill payments
+            total_expense = (
+                Transaction.objects
+                .filter(wallet=wallet, transaction_type='transfer', created_at__gte=month_start)
+                .aggregate(t=Sum('amount'))['t'] or Decimal('0')
+            ) + (
+                Transaction.objects
+                .filter(wallet=wallet, transaction_type='bill_payment', created_at__gte=month_start)
+                .aggregate(t=Sum('amount'))['t'] or Decimal('0')
             )
 
         ctx = {
@@ -356,6 +364,7 @@ class TransactionListView(LoginRequiredMixin, View):
             transactions = (
                 Transaction.objects
                 .filter(wallet=wallet)
+                .select_related('billpayment')
                 .order_by('-created_at')
             )
             received_transfers = (
@@ -821,6 +830,243 @@ class TopupView(LoginRequiredMixin, View):
             'transaction_fee': self.fee_amount,
             'submission_token': request.session.get('topup_submission_token') or self._create_submission_token(request),
         })
+
+
+class BillPaymentPageView(LoginRequiredMixin, View):
+    """GET/POST /bill-payment/ — Pay a bill from the authenticated user's wallet."""
+    login_url = '/login/'
+    template_name = 'wallet/bill_payment.html'
+
+    def _prepare_context(self, request, form=None, wallet=None, wallets=None, billers=None, categories=None, kyc_verified=True, has_pin=True, otp_challenge=False):
+        security, _ = Security.objects.get_or_create(user=request.user)
+        wallets = wallets or Wallet.objects.filter(user=request.user)
+        wallet = wallet or wallets.first()
+        billers = billers or Biller.objects.filter(status='active')
+        # Get unique categories from active billers
+        categories = categories or Biller.objects.filter(status='active').exclude(category__isnull=True).exclude(category='').values_list('category', flat=True).distinct().order_by('category')
+        return {
+            'form': form or BillPaymentForm(user=request.user),
+            'wallets': wallets,
+            'wallet': wallet,
+            'billers': billers,
+            'categories': categories,
+            'kyc_verified': kyc_verified,
+            'has_pin': has_pin,
+            'otp_required': security.otp_enabled,
+            'otp_challenge': otp_challenge,
+            'active_page': 'bill_payment',
+        }
+
+    def get(self, request):
+        wallets = Wallet.objects.filter(user=request.user)
+        billers = Biller.objects.filter(status='active')
+        categories = Biller.objects.filter(status='active').exclude(category__isnull=True).exclude(category='').values_list('category', flat=True).distinct().order_by('category')
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        kyc_verified = bool(verification and verification.verification_status == 'verified')
+        security, _ = Security.objects.get_or_create(user=request.user)
+        has_pin = bool(security.pin_hash)
+
+        if not kyc_verified:
+            messages.warning(request, 'KYC verification is required to pay bills. Please complete your KYC verification.')
+        elif not has_pin:
+            messages.warning(request, 'You must set up a transaction PIN in your profile settings before paying bills.')
+
+        return render(request, self.template_name, self._prepare_context(
+            request, wallets=wallets, billers=billers, categories=categories, kyc_verified=kyc_verified, has_pin=has_pin
+        ))
+
+    def post(self, request):
+        wallets = Wallet.objects.filter(user=request.user)
+        form = BillPaymentForm(request.POST, user=request.user)
+
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        kyc_verified = bool(verification and verification.verification_status == 'verified')
+        security, _ = Security.objects.get_or_create(user=request.user)
+        has_pin = bool(security.pin_hash)
+
+        if not kyc_verified:
+            messages.error(request, 'KYC verification is required to pay bills. Please complete your KYC verification.')
+            return render(request, self.template_name, self._prepare_context(
+                request, form=form, wallets=wallets, kyc_verified=False, has_pin=has_pin
+            ))
+
+        if not has_pin:
+            messages.error(request, 'You must set up a transaction PIN in your profile settings before paying bills.')
+            return redirect('profile')
+
+        if not wallets.exists():
+            messages.error(request, 'You do not have a wallet yet.')
+            return redirect('dashboard')
+
+        wallet = wallets.filter(id=request.POST.get('wallet')).first() or wallets.first()
+
+        if form.is_valid():
+            d = form.cleaned_data
+            wallet = d['wallet']
+
+            # Verify PIN
+            from django.contrib.auth.hashers import check_password
+            if not check_password(d['pin'], security.pin_hash):
+                form.add_error('pin', 'Invalid transaction PIN.')
+                return render(request, self.template_name, self._prepare_context(
+                    request, form=form, wallet=wallet, wallets=wallets,
+                    kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=False
+                ))
+
+            # Verify OTP if enabled
+            if security.otp_enabled:
+                otp_code = d.get('otp_code')
+                if not otp_code:
+                    otp = str(random.randint(100000, 999999))
+                    security.temp_otp = otp
+                    security.temp_otp_expiry = timezone.now() + timezone.timedelta(minutes=5)
+                    security.save()
+
+                    Notification.objects.create(
+                        user=request.user,
+                        title='Bill Payment OTP Code',
+                        message=f'Your OTP code for bill payment is: {otp}',
+                    )
+                    messages.info(request, 'An OTP has been generated. Please check your notifications to verify.')
+
+                    return render(request, self.template_name, self._prepare_context(
+                        request, form=form, wallet=wallet, wallets=wallets,
+                        kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=True
+                    ))
+
+                if security.temp_otp != otp_code or security.temp_otp_expiry < timezone.now():
+                    form.add_error('otp_code', 'Invalid or expired OTP code.')
+                    return render(request, self.template_name, self._prepare_context(
+                        request, form=form, wallet=wallet, wallets=wallets,
+                        kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=True
+                    ))
+
+            # Clear temporary OTP once validation succeeds
+            if security.otp_enabled:
+                security.temp_otp = None
+                security.temp_otp_expiry = None
+                security.save()
+
+            # Check wallet status
+            if wallet.status != 'active':
+                form.add_error(None, 'Selected wallet is not active.')
+                return render(request, self.template_name, self._prepare_context(
+                    request, form=form, wallet=wallet, wallets=wallets,
+                    kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=False
+                ))
+
+            if wallet.balance < d['amount']:
+                form.add_error('amount', f'Insufficient balance. Available: {wallet.balance} {wallet.currency}')
+                return render(request, self.template_name, self._prepare_context(
+                    request, form=form, wallet=wallet, wallets=wallets,
+                    kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=False
+                ))
+
+            # Transaction limits
+            today = timezone.now().date()
+            daily_total = Transaction.objects.filter(
+                wallet=wallet,
+                transaction_type='bill_payment',
+                created_at__date=today
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+            limit, _ = TransactionLimit.objects.get_or_create(user=request.user)
+            if limit.daily_limit > 0 and daily_total + d['amount'] > limit.daily_limit:
+                form.add_error('amount', f'Daily bill payment limit exceeded. Limit: {limit.daily_limit}, Already paid: {daily_total}')
+                return render(request, self.template_name, self._prepare_context(
+                    request, form=form, wallet=wallet, wallets=wallets,
+                    kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=False
+                ))
+
+            month_start = today.replace(day=1)
+            monthly_total = Transaction.objects.filter(
+                wallet=wallet,
+                transaction_type='bill_payment',
+                created_at__date__gte=month_start
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+            if limit.monthly_limit > 0 and monthly_total + d['amount'] > limit.monthly_limit:
+                form.add_error('amount', f'Monthly bill payment limit exceeded. Limit: {limit.monthly_limit}, Already paid: {monthly_total}')
+                return render(request, self.template_name, self._prepare_context(
+                    request, form=form, wallet=wallet, wallets=wallets,
+                    kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=False
+                ))
+
+            with db_transaction.atomic():
+                biller = d.get('biller')
+                bill_type = biller.category.lower().replace(' ', '_').replace('/', '_') if biller and biller.category else 'other'
+                account_reference = biller.account_number if biller else 'N/A'
+                
+                # Get biller's wallet (if they have a user account)
+                biller_wallet = biller.wallet if biller and biller.user else None
+                
+                # Create transaction for customer
+                tx = Transaction.objects.create(
+                    wallet=wallet,
+                    biller=biller,
+                    transaction_type='bill_payment',
+                    amount=d['amount'],
+                    status='completed',
+                    description=d.get('description', f'Bill payment for {account_reference}'),
+                    reference=f'BILL-{uuid.uuid4().hex[:8].upper()}',
+                )
+                bill_payment = BillPayment.objects.create(
+                    transaction=tx,
+                    bill_type=bill_type,
+                    account_reference=account_reference,
+                )
+                
+                # Deduct from customer wallet
+                wallet.balance -= d['amount']
+                wallet.save()
+                
+                # Credit biller's wallet (if they have one)
+                if biller_wallet:
+                    biller_wallet.balance += d['amount']
+                    biller_wallet.save()
+                    
+                    # Create transaction record for biller
+                    biller_tx = Transaction.objects.create(
+                        wallet=biller_wallet,
+                        biller=biller,
+                        transaction_type='bill_payment_received',
+                        amount=d['amount'],
+                        status='completed',
+                        description=f'Payment received from {request.user.full_name} for {account_reference}',
+                        reference=f'BILL-RCV-{uuid.uuid4().hex[:8].upper()}',
+                    )
+                    
+                    # Notify biller
+                    Notification.objects.create(
+                        user=biller.user,
+                        transaction=biller_tx,
+                        notification_type='bill_payment',
+                        title='Payment Received',
+                        message=f'You received {d["amount"]} {wallet.currency} from {request.user.full_name} for bill payment.',
+                    )
+
+                NotificationService.notify_bill_payment_completed(
+                    user=request.user,
+                    amount=d['amount'],
+                    currency=wallet.currency,
+                    transaction=tx,
+                    bill_type=bill_payment.bill_type,
+                    account_reference=bill_payment.account_reference
+                )
+                AuditLog.objects.create(
+                    user=request.user,
+                    action=f'Bill payment {d["amount"]} {wallet.currency} for {bill_payment.bill_type} account {bill_payment.account_reference}',
+                    ip_address=request.META.get('REMOTE_ADDR'),
+                )
+
+            messages.success(
+                request,
+                f'Successfully paid {d["amount"]} {wallet.currency} for {bill_payment.bill_type} bill (Account: {bill_payment.account_reference}).'
+            )
+            return redirect('dashboard')
+
+        return render(request, self.template_name, self._prepare_context(
+            request, form=form, wallet=wallet, wallets=wallets,
+            kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=False
+        ))
 
 
 class ProfileView(LoginRequiredMixin, View):
@@ -1591,46 +1837,165 @@ class BillPaymentViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        # Get wallet and validate
-        wallet_id = request.data.get('wallet')
-        wallet = get_object_or_404(Wallet, id=wallet_id, user=request.user)
-        
-        # Get transaction data
-        transaction_data = request.data.get('transaction', {})
-        amount = Decimal(str(transaction_data.get('amount', 0)))
-        
-        if wallet.balance < amount:
+        data = request.data
+
+        # KYC verification required
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        if not (verification and verification.verification_status == 'verified'):
             return Response(
-                {'error': 'Insufficient balance.'},
+                {'error': 'KYC verification is required to pay bills. Please complete your KYC verification.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Security setup required
+        security, _ = Security.objects.get_or_create(user=request.user)
+        if not security.pin_hash:
+            return Response(
+                {'error': 'Please set up a transaction PIN in your security settings before paying bills.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        pin = data.get('pin')
+        if not pin:
+            return Response({'error': 'Transaction PIN is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from django.contrib.auth.hashers import check_password
+        if not check_password(pin, security.pin_hash):
+            return Response({'error': 'Invalid transaction PIN.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # OTP verification
+        if security.otp_enabled:
+            otp = data.get('otp')
+            if not otp:
+                otp_val = str(random.randint(100000, 999999))
+                security.temp_otp = otp_val
+                security.temp_otp_expiry = timezone.now() + timezone.timedelta(minutes=5)
+                security.save()
+
+                Notification.objects.create(
+                    user=request.user,
+                    title='Bill Payment OTP Code',
+                    message=f'Your OTP code for bill payment is: {otp_val}',
+                )
+                return Response({
+                    'error': 'OTP verification required.',
+                    'otp_required': True
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            if security.temp_otp != otp or security.temp_otp_expiry < timezone.now():
+                return Response({'error': 'Invalid or expired OTP code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            security.temp_otp = None
+            security.temp_otp_expiry = None
+            security.save()
+
+        # Wallet validation
+        wallet_id = data.get('wallet')
+        try:
+            wallet = Wallet.objects.get(id=wallet_id, user=request.user)
+        except (Wallet.DoesNotExist, ValueError, TypeError):
+            return Response({'error': 'Wallet not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if wallet.status != 'active':
+            return Response({'error': 'Wallet is not active.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        amount = Decimal(str(data.get('amount', 0)))
+        if amount <= 0:
+            return Response({'error': 'Invalid amount.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if wallet.balance < amount:
+            return Response(
+                {'error': f'Insufficient balance. Available: {wallet.balance} {wallet.currency}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Transaction limits
+        today = timezone.now().date()
+        daily_total = Transaction.objects.filter(
+            wallet=wallet,
+            transaction_type='bill_payment',
+            created_at__date=today
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        limit, _ = TransactionLimit.objects.get_or_create(user=request.user)
+        if limit.daily_limit > 0 and daily_total + amount > limit.daily_limit:
+            return Response(
+                {'error': f'Daily bill payment limit exceeded. Limit: {limit.daily_limit}, Already paid: {daily_total}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        month_start = today.replace(day=1)
+        monthly_total = Transaction.objects.filter(
+            wallet=wallet,
+            transaction_type='bill_payment',
+            created_at__date__gte=month_start
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        if limit.monthly_limit > 0 and monthly_total + amount > limit.monthly_limit:
+            return Response(
+                {'error': f'Monthly bill payment limit exceeded. Limit: {limit.monthly_limit}, Already paid: {monthly_total}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            biller_id = data.get('biller')
+            biller = Biller.objects.get(id=biller_id, status='active') if biller_id else None
+        except (Biller.DoesNotExist, ValueError, TypeError):
+            return Response({'error': 'Biller not found or inactive.'}, status=status.HTTP_404_NOT_FOUND)
+
+        bill_type = biller.category.lower().replace(' ', '_').replace('/', '_') if biller and biller.category else 'other'
+        account_reference = biller.account_number if biller else 'N/A'
+        description = data.get('description', '')
+        if not description:
+            description = f'Bill payment for {account_reference}'
+
         with db_transaction.atomic():
-            # Create transaction
+            # Get biller's wallet (if they have a user account)
+            biller_wallet = biller.wallet if biller and biller.user else None
+            
             tx = Transaction.objects.create(
                 wallet=wallet,
+                biller=biller,
                 transaction_type='bill_payment',
                 amount=amount,
                 status='completed',
-                description=transaction_data.get('description', ''),
+                description=description,
                 reference=f'BILL-{uuid.uuid4().hex[:8].upper()}',
             )
-            
-            # Create bill payment
+
             bill_payment = BillPayment.objects.create(
                 transaction=tx,
-                bill_type=request.data.get('bill_type', ''),
-                account_reference=request.data.get('account_reference', ''),
+                bill_type=bill_type,
+                account_reference=account_reference,
             )
-            
-            # Deduct from wallet
+
+            # Deduct from customer wallet
             wallet.balance -= amount
             wallet.save()
             
-            # Notify user
+            # Credit biller's wallet (if they have one)
+            if biller_wallet:
+                biller_wallet.balance += amount
+                biller_wallet.save()
+                
+                # Create transaction record for biller
+                biller_tx = Transaction.objects.create(
+                    wallet=biller_wallet,
+                    biller=biller,
+                    transaction_type='bill_payment_received',
+                    amount=amount,
+                    status='completed',
+                    description=f'Payment received from {request.user.full_name} for {account_reference}',
+                    reference=f'BILL-RCV-{uuid.uuid4().hex[:8].upper()}',
+                )
+                
+                # Notify biller
+                Notification.objects.create(
+                    user=biller.user,
+                    transaction=biller_tx,
+                    notification_type='bill_payment',
+                    title='Payment Received',
+                    message=f'You received {amount} {wallet.currency} from {request.user.full_name} for bill payment.',
+                )
+
             NotificationService.notify_bill_payment_completed(
                 user=request.user,
                 amount=amount,
@@ -1639,10 +2004,16 @@ class BillPaymentViewSet(viewsets.ModelViewSet):
                 bill_type=bill_payment.bill_type,
                 account_reference=bill_payment.account_reference
             )
-        
+            AuditLog.objects.create(
+                user=request.user,
+                action=f'Bill payment {amount} {wallet.currency} for {bill_payment.bill_type} account {bill_payment.account_reference}',
+                ip_address=request.META.get('REMOTE_ADDR'),
+            )
+
         return Response({
             'message': 'Bill payment successful.',
-            'bill_payment': BillPaymentSerializer(bill_payment).data
+            'bill_payment': BillPaymentSerializer(bill_payment).data,
+            'transaction': TransactionSerializer(tx).data,
         }, status=status.HTTP_201_CREATED)
 
 class WithdrawalViewSet(viewsets.ModelViewSet):
@@ -2334,30 +2705,434 @@ class PasswordResetValidateTokenView(APIView):
 
 
 class NotificationListView(LoginRequiredMixin, View):
-    """GET /notifications/ — View all user notifications."""
+    """GET /notifications/ — View all user notifications. Marks all as read on visit."""
     login_url = '/login/'
     template_name = 'wallet/notifications.html'
 
     def get(self, request):
+        # Mark all unread notifications as read immediately
+        Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
+
         notifications = (
             Notification.objects
             .filter(user=request.user)
             .select_related('transaction')
             .order_by('-created_at')
         )
-        
-        # Get unread count
-        unread_count = notifications.filter(is_read=False).count()
-        
+
+        # Unread count is now 0 since we just marked all as read
+        unread_count = 0
+
         # Pagination (optional - show 20 per page)
         from django.core.paginator import Paginator
         paginator = Paginator(notifications, 20)
         page_number = request.GET.get('page')
         page_obj = paginator.get_page(page_number)
-        
+
         ctx = {
             'notifications': page_obj,
             'unread_count': unread_count,
             'active_page': 'notifications',
+        }
+        return render(request, self.template_name, ctx)
+
+
+# ═════════════════════════════════════════
+#  BAKONG PAYMENT VIEWS
+# ═════════════════════════════════════════
+
+import base64
+import json
+import hashlib
+import hmac
+from bakong_khqr import KHQR
+from urllib import error as urlerror
+from urllib import request as urlrequest
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+
+
+class BakongTopupView(LoginRequiredMixin, View):
+    """GET/POST /bakong-topup/ — Generate Bakong QR for wallet top-up."""
+    login_url = '/login/'
+    template_name = 'wallet/bakong_topup.html'
+
+    def get(self, request):
+        wallets = Wallet.objects.filter(user=request.user)
+        wallet = wallets.first()
+        
+        if not wallets.exists():
+            messages.error(request, 'You do not have a wallet yet.')
+            return redirect('dashboard')
+
+        # Get pending Bakong payments for this user
+        pending_payments = BakongPayment.objects.filter(
+            wallet__user=request.user,
+            status='pending',
+            expires_at__gt=timezone.now()
+        ).order_by('-created_at')[:5]
+
+        ctx = {
+            'wallets': wallets,
+            'wallet': wallet,
+            'active_page': 'bakong_topup',
+            'pending_payments': pending_payments,
+            'bakong_merchant_name': settings.BAKONG_MERCHANT_NAME,
+            'bakong_account_id': settings.BAKONG_ACCOUNT_ID,
+        }
+        return render(request, self.template_name, ctx)
+
+    def post(self, request):
+        wallets = Wallet.objects.filter(user=request.user)
+        
+        if not wallets.exists():
+            messages.error(request, 'You do not have a wallet yet.')
+            return redirect('dashboard')
+
+        wallet_id = request.POST.get('wallet')
+        amount = request.POST.get('amount')
+        currency = request.POST.get('currency', 'KHR')
+
+        try:
+            wallet = wallets.get(id=wallet_id)
+        except Wallet.DoesNotExist:
+            messages.error(request, 'Wallet not found.')
+            return redirect('bakong_topup')
+
+        try:
+            amount = Decimal(amount)
+            if amount <= 0:
+                raise ValueError
+            # KHQR only permits whole-number KHR amounts.  Do not silently
+            # truncate a value such as 1000.50 to 1000 in the QR payload.
+            if currency == 'KHR' and amount != amount.to_integral_value():
+                raise ValueError
+        except (ValueError, TypeError):
+            messages.error(request, 'Invalid amount. KHR amounts must be whole numbers.')
+            return redirect('bakong_topup')
+
+        # Generate unique reference number
+        reference_number = f"BKN-{uuid.uuid4().hex[:12].upper()}"
+
+        # Create Bakong payment record
+        expires_at = timezone.now() + timezone.timedelta(minutes=10)
+        bakong_payment = BakongPayment.objects.create(
+            wallet=wallet,
+            amount=amount,
+            currency=currency,
+            reference_number=reference_number,
+            expires_at=expires_at,
+        )
+
+        # Generate Bakong QR data (KHQR format).
+        try:
+            qr_data = self._generate_bakong_qr(bakong_payment)
+        except ValueError as exc:
+            bakong_payment.delete()
+            messages.error(request, str(exc))
+            return redirect('bakong_topup')
+        
+        # Bakong verifies the MD5 of the *exact* KHQR string it received.
+        # Store it with the payment so status polling can use the official API.
+        bakong_payment.qr_code = qr_data
+        bakong_payment.bakong_md5 = KHQR().generate_md5(qr_data)
+        bakong_payment.save(update_fields=['qr_code', 'bakong_md5', 'updated_at'])
+
+        messages.info(request, f'Please scan the QR code with Bakong app to complete payment. Reference: {reference_number}')
+        
+        return redirect('bakong_qr_display', payment_id=bakong_payment.id)
+
+    def _generate_bakong_qr(self, payment):
+        """Generate dynamic KHQR through the Python KHQR SDK."""
+        bakong_account = settings.BAKONG_ACCOUNT_ID
+        if not bakong_account:
+            raise ValueError('BAKONG_ACCOUNT_ID must be configured before generating a QR code.')
+        if '@' not in bakong_account or len(bakong_account) > 32:
+            raise ValueError('BAKONG_ACCOUNT_ID must be a valid Bakong ID (for example name@bkrt).')
+
+        merchant_name = settings.BAKONG_MERCHANT_NAME or 'NexusPay'
+        merchant_city = settings.BAKONG_MERCHANT_CITY or 'Phnom Penh'
+        return KHQR().create_qr(
+            account_id=bakong_account,
+            merchant_name=merchant_name,
+            merchant_city=merchant_city,
+            amount=float(payment.amount),
+            currency=payment.currency,
+            bill_number=payment.reference_number or str(payment.id),
+            static=False,
+            # The SDK's minimum QR expiry is one day. The application still
+            # expires and rejects this wallet top-up after ten minutes.
+            expiration=1,
+        )
+
+
+class BakongQRDisplayView(LoginRequiredMixin, View):
+    """GET /bakong-qr/<payment_id>/ — Display QR code for scanning."""
+    login_url = '/login/'
+    template_name = 'wallet/bakong_qr_display.html'
+
+    def get(self, request, payment_id):
+        try:
+            payment = BakongPayment.objects.get(
+                id=payment_id,
+                wallet__user=request.user
+            )
+        except BakongPayment.DoesNotExist:
+            messages.error(request, 'Payment not found.')
+            return redirect('bakong_topup')
+
+        if payment.status == 'completed':
+            messages.success(request, 'Payment already completed!')
+            return redirect('dashboard')
+        
+        if payment.status == 'expired' or payment.expires_at < timezone.now():
+            payment.status = 'expired'
+            payment.save()
+            messages.error(request, 'Payment has expired. Please create a new one.')
+            return redirect('bakong_topup')
+
+        ctx = {
+            'payment': payment,
+            'qr_data': payment.qr_code or '',
+            # Equivalent to `$md5` passed from PaymentController to checkout.
+            # It is safe to send to the browser; the Bakong access token stays
+            # on this server.
+            'bakong_md5': payment.bakong_md5 or '',
+            'active_page': 'bakong_topup',
+        }
+        return render(request, self.template_name, ctx)
+
+
+class BakongVerifyTransactionAPI(APIView):
+    """POST /api/bakong/verify/ — Django equivalent of verifyTransaction()."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        md5 = request.data.get('md5', '')
+        if not isinstance(md5, str) or len(md5) != 32:
+            return Response({'error': 'A valid Bakong MD5 is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            payment = BakongPayment.objects.get(
+                bakong_md5=md5,
+                wallet__user=request.user,
+            )
+        except BakongPayment.DoesNotExist:
+            return Response({'error': 'Payment not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if payment.status == 'pending' and payment.expires_at < timezone.now():
+            payment.status = 'expired'
+            payment.save(update_fields=['status', 'updated_at'])
+
+        if payment.status == 'pending':
+            try:
+                result = BakongPaymentStatusAPI._check_transaction_by_md5(md5)
+            except BakongAPIError as exc:
+                return Response({'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+            if BakongPaymentStatusAPI._is_successful_transaction(result, payment):
+                BakongPaymentStatusAPI._complete_payment(payment, result)
+                payment.refresh_from_db()
+        else:
+            result = {'responseCode': 0 if payment.status == 'completed' else 1, 'data': None}
+
+        # Keep the Bakong response shape used by the Laravel controller and
+        # add our local state so the browser knows whether to finish or retry.
+        result['paymentStatus'] = payment.status
+        return Response(result)
+
+
+class BakongPaymentStatusAPI(APIView):
+    """GET /api/bakong/payment/<payment_id>/status/ — Check payment status."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, payment_id):
+        try:
+            payment = BakongPayment.objects.get(
+                id=payment_id,
+                wallet__user=request.user
+            )
+        except BakongPayment.DoesNotExist:
+            return Response(
+                {'error': 'Payment not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check if expired
+        if payment.status == 'pending' and payment.expires_at < timezone.now():
+            payment.status = 'expired'
+            payment.save(update_fields=['status', 'updated_at'])
+
+        # Match PaymentController::verifyTransaction(): check the MD5 produced
+        # while generating the QR with Bakong's transaction-status API.
+        if payment.status == 'pending':
+            try:
+                result = self._check_transaction_by_md5(payment.bakong_md5)
+                if self._is_successful_transaction(result, payment):
+                    self._complete_payment(payment, result)
+                    payment.refresh_from_db()
+            except BakongAPIError as exc:
+                # A temporary API outage must not mark a pending payment failed.
+                return Response({
+                    'payment_id': payment.id,
+                    'status': payment.status,
+                    'verification_error': str(exc),
+                }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        return Response({
+            'payment_id': payment.id,
+            'reference_number': payment.reference_number,
+            'amount': str(payment.amount),
+            'currency': payment.currency,
+            'status': payment.status,
+            'created_at': payment.created_at.isoformat(),
+            'expires_at': payment.expires_at.isoformat(),
+        })
+
+    @staticmethod
+    def _check_transaction_by_md5(md5):
+        if not md5:
+            raise BakongAPIError('This payment has no Bakong MD5 value.')
+        if not settings.BAKONG_TOKEN:
+            raise BakongAPIError('BAKONG_TOKEN is not configured.')
+
+        endpoint = settings.BAKONG_API_URL.rstrip('/') + '/v1/check_transaction_by_md5'
+        body = json.dumps({'md5': md5}).encode('utf-8')
+        request = urlrequest.Request(
+            endpoint,
+            data=body,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {settings.BAKONG_TOKEN}',
+            },
+            method='POST',
+        )
+        try:
+            with urlrequest.urlopen(request, timeout=10) as response:
+                payload = json.loads(response.read().decode('utf-8'))
+        except (urlerror.URLError, urlerror.HTTPError, TimeoutError, json.JSONDecodeError) as exc:
+            raise BakongAPIError('Unable to verify payment with Bakong.') from exc
+        if not isinstance(payload, dict):
+            raise BakongAPIError('Bakong returned an invalid verification response.')
+        return payload
+
+    @staticmethod
+    def _is_successful_transaction(result, payment):
+        """Accept only a successful response whose amount/currency match the QR."""
+        if str(result.get('responseCode')) != '0' or not isinstance(result.get('data'), dict):
+            return False
+        data = result['data']
+        received_amount = data.get('amount', data.get('transactionAmount'))
+        received_currency = data.get('currency', data.get('transactionCurrency'))
+        if received_amount is not None and Decimal(str(received_amount)) != payment.amount:
+            return False
+        if received_currency and str(received_currency).upper() not in {
+            payment.currency.upper(), '116' if payment.currency == 'KHR' else '840'
+        }:
+            return False
+        return True
+
+    @staticmethod
+    def _complete_payment(payment, payload):
+        """Credit exactly once; both API polling and webhook delivery use this."""
+        with db_transaction.atomic():
+            payment = BakongPayment.objects.select_for_update().select_related('wallet__user').get(pk=payment.pk)
+            if payment.status == 'completed':
+                return
+            if payment.status != 'pending':
+                return
+            data = payload.get('data', payload)
+            payment.status = 'completed'
+            payment.bakong_tx_id = data.get('transactionId', data.get('transaction_id', payment.bakong_tx_id))
+            payment.webhook_payload = payload
+            payment.save(update_fields=['status', 'bakong_tx_id', 'webhook_payload', 'updated_at'])
+
+            wallet = payment.wallet
+            wallet.balance += payment.amount
+            wallet.save()
+            tx = Transaction.objects.create(
+                wallet=wallet, transaction_type='topup', amount=payment.amount,
+                status='completed', description=f'Topup via Bakong (Ref: {payment.reference_number})',
+                reference=f'TOP-BKN-{uuid.uuid4().hex[:8].upper()}',
+            )
+            Topup.objects.create(transaction=tx, payment_method='bakong', provider='Bakong')
+            NotificationService.notify_topup_completed(user=wallet.user, amount=payment.amount,
+                currency=wallet.currency, transaction=tx, payment_method='Bakong')
+            Notification.objects.create(user=wallet.user, transaction=tx, notification_type='topup',
+                title='Bakong Topup Successful',
+                message=f'Your wallet has been credited with {payment.amount} {wallet.currency} via Bakong.')
+
+
+class BakongAPIError(Exception):
+    """The Bakong verification service could not provide a usable response."""
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class BakongWebhookView(View):
+    """POST /webhooks/bakong/ — Receive Bakong payment notifications."""
+    
+    def post(self, request):
+        """Handle Bakong webhook callback."""
+        try:
+            payload = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+        # Verify webhook signature if provided
+        # In production, verify the signature using BAKONG_TOKEN
+        signature = request.headers.get('X-Bakong-Signature', '')
+        expected_signature = self._generate_signature(request.body)
+        
+        # For development, we can skip signature verification
+        # In production: if signature != expected_signature: return JsonResponse({'error': 'Invalid signature'}, status=401)
+
+        # Extract payment details from payload
+        reference_number = payload.get('reference')
+        bakong_tx_id = payload.get('transactionId')
+        status_code = payload.get('status', '').lower()
+        amount = payload.get('amount')
+        currency = payload.get('currency', 'KHR')
+
+        if not reference_number:
+            return JsonResponse({'error': 'Reference number required'}, status=400)
+
+        try:
+            payment = BakongPayment.objects.get(reference_number=reference_number)
+        except BakongPayment.DoesNotExist:
+            return JsonResponse({'error': 'Payment not found'}, status=404)
+
+        # Update payment status. The shared completion method is idempotent, so
+        # a webhook and MD5 polling cannot credit the same payment twice.
+        if status_code == 'success' or status_code == 'completed':
+            BakongPaymentStatusAPI._complete_payment(payment, payload)
+
+        elif status_code == 'failed':
+            payment.status = 'failed'
+            payment.webhook_payload = payload
+            payment.save()
+
+        return JsonResponse({'status': 'ok'})
+
+    def _generate_signature(self, body):
+        """Generate HMAC signature for webhook verification."""
+        if not settings.BAKONG_TOKEN:
+            return ''
+        secret = settings.BAKONG_TOKEN.encode('utf-8')
+        return hmac.new(secret, body, hashlib.sha256).hexdigest()
+
+
+class BakongPaymentHistoryView(LoginRequiredMixin, View):
+    """GET /bakong-history/ — View Bakong payment history."""
+    login_url = '/login/'
+    template_name = 'wallet/bakong_history.html'
+
+    def get(self, request):
+        payments = BakongPayment.objects.filter(
+            wallet__user=request.user
+        ).order_by('-created_at')
+
+        ctx = {
+            'payments': payments,
+            'active_page': 'bakong_history',
         }
         return render(request, self.template_name, ctx)

@@ -1,0 +1,5 @@
+ngrok version                                              
+>> ngrok http 8000   
+---
+Then run the Django development server:
+python manage.py runserver 0.0.0.0:8000

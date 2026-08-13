@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.utils import timezone
-from django.utils.html import format_html
+from django.utils.html import format_html, mark_safe
 from django.conf import settings
 from django.db.models import Sum, Count, Avg, Q
 from django.db.models.functions import TruncDate
@@ -511,11 +511,13 @@ class NotificationAdmin(admin.ModelAdmin):
     user_info.short_description = 'User'
 
     def is_read_badge(self, obj):
+        if not obj or not hasattr(obj, 'is_read'):
+            return mark_safe('<span>—</span>')
         if obj.is_read:
-            return format_html(
+            return mark_safe(
                 '<span style="background-color: green; color: white; padding: 3px 8px; border-radius: 4px; font-size: 11px;">READ</span>'
             )
-        return format_html(
+        return mark_safe(
             '<span style="background-color: orange; color: white; padding: 3px 8px; border-radius: 4px; font-size: 11px;">UNREAD</span>'
         )
     is_read_badge.short_description = 'Status'
@@ -531,9 +533,26 @@ class MerchantAdmin(admin.ModelAdmin):
 
 @admin.register(Biller)
 class BillerAdmin(admin.ModelAdmin):
-    list_display = ('biller_name', 'category', 'account_number', 'status', 'created_at')
+    list_display = ('biller_name', 'category', 'account_number', 'wallet_balance', 'user_info', 'status', 'created_at')
     list_filter = ('category', 'status', 'created_at')
     search_fields = ('biller_name', 'account_number')
+    raw_id_fields = ('user',)
+
+    def wallet_balance(self, obj):
+        """Display biller's wallet balance."""
+        if obj.user:
+            wallet = obj.user.wallets.first()
+            if wallet:
+                return f"{wallet.balance} {wallet.currency}"
+        return "—"
+    wallet_balance.short_description = 'Wallet Balance'
+
+    def user_info(self, obj):
+        """Display linked user info."""
+        if obj.user:
+            return f"{obj.user.full_name} ({obj.user.email})"
+        return "—"
+    user_info.short_description = 'Linked User'
 
 
 @admin.register(Topup)
@@ -747,5 +766,9 @@ class DashboardAdminSite(admin.AdminSite):
 custom_admin_site = DashboardAdminSite(name='admin')
 
 # Re-register all models with custom admin
-for model, admin_class in admin.site._registry.copy().items():
-    custom_admin_site.register(model, admin_class.__class__)
+# Use the model's admin class from the default site
+for model, admin_instance in list(admin.site._registry.items()):
+    try:
+        custom_admin_site.register(model, admin_instance.__class__)
+    except admin.sites.AlreadyRegistered:
+        pass  # Already registered, skip

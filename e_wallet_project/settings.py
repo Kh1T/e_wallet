@@ -37,8 +37,18 @@ ALLOWED_HOSTS = ['*']
 # HTTPS development tunnel used to test the app from mobile devices.
 CSRF_TRUSTED_ORIGINS = [
     'https://sector-ritzy-degrease.ngrok-free.dev',
+    'http://127.0.0.1',
+    'http://localhost',
 ]
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# CSRF Cookie settings
+CSRF_COOKIE_SECURE = False  # Set to True in production with HTTPS
+CSRF_COOKIE_HTTPONLY = False  # Must be False for JavaScript to access it
+CSRF_COOKIE_SAMESITE = 'Lax'
+CSRF_USE_SESSIONS = False  # Use cookie-based CSRF tokens
+SESSION_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_SECURE = False  # Set to True in production with HTTPS
 
 
 # Application definition
@@ -96,6 +106,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'wallet.context_processors.notification_counts',
             ],
         },
     },
@@ -169,3 +180,12 @@ FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 
 # ── Default primary key field type ────────────────────────────────
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# ── Bakong Payment Configuration ───────────────────────────────────
+BAKONG_TOKEN = os.getenv('BAKONG_TOKEN', '')
+BAKONG_ACCOUNT_ID = os.getenv('BAKONG_ACCOUNT_ID', '')
+BAKONG_MERCHANT_NAME = os.getenv('BAKONG_MERCHANT_NAME', '')
+BAKONG_MERCHANT_CITY = os.getenv('BAKONG_MERCHANT_CITY', '')
+# Bakong's production API base URL.  Set this to
+# https://sit-api-bakong.nbc.gov.kh when using a SIT token.
+BAKONG_API_URL = os.getenv('BAKONG_API_URL', 'https://api-bakong.nbc.gov.kh')

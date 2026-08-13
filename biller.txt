@@ -1,0 +1,312 @@
+# NexusPay E-Wallet - Biller Accounts and User Credentials
+# =========================================================
+# Generated: 2026-07-24
+# 
+# INSTRUCTIONS:
+# 1. Create these billers in Django Admin (/admin/wallet/biller/)
+# 2. Create the user in Django Admin (/admin/wallet/user/)
+# 3. Or use the Django shell commands below
+
+
+# =========================================================
+# BILLER ACCOUNTS
+# =========================================================
+
+## Electricity Billers
+---------------------
+Biller Name: Electricite du Cambodge (EDC)
+Category: Electricity
+Account Number: 1234567890
+Status: active
+Linked User: edc@biller.com (password: BillerPass123!)
+
+Biller Name: Cambodia Electricity (CE)
+Category: Electricity
+Account Number: ELEC-2024-001
+Status: active
+Linked User: ce@biller.com (password: BillerPass123!)
+
+## Water Billers
+----------------
+Biller Name: Phnom Penh Water Supply Authority (PPWSA)
+Category: Water
+Account Number: 9876543210
+Status: active
+Linked User: ppwsa@biller.com (password: BillerPass123!)
+
+Biller Name: Siem Reap Water Supply
+Category: Water
+Account Number: WATER-SR-001
+Status: active
+Linked User: srwater@biller.com (password: BillerPass123!)
+
+## Internet Billers
+-------------------
+Biller Name: Metfone Internet
+Category: Internet
+Account Number: META-INT-001
+Status: active
+Linked User: metfone@biller.com (password: BillerPass123!)
+
+Biller Name: Cellcard Internet
+Category: Internet
+Account Number: CELL-INT-002
+Status: active
+Linked User: cellcard@biller.com (password: BillerPass123!)
+
+Biller Name: Smart Internet
+Category: Internet
+Account Number: SMART-NET-003
+Status: active
+Linked User: smart@biller.com (password: BillerPass123!)
+
+## Phone/Mobile Billers
+-----------------------
+Biller Name: Metfone Mobile
+Category: Phone
+Account Number: META-MOB-001
+Status: active
+Linked User: metfonemobile@biller.com (password: BillerPass123!)
+
+Biller Name: Cellcard Mobile
+Category: Phone
+Account Number: CELL-MOB-002
+Status: active
+Linked User: cellcardmobile@biller.com (password: BillerPass123!)
+
+Biller Name: Smart Mobile
+Category: Phone
+Account Number: SMART-MOB-003
+Status: active
+Linked User: smartmobile@biller.com (password: BillerPass123!)
+
+## TV/Cable Billers
+-------------------
+Biller Name: Cambodian Television (CTV)
+Category: TV
+Account Number: CTV-SUB-001
+Status: active
+Linked User: ctv@biller.com (password: BillerPass123!)
+
+Biller Name: PPCTV
+Category: TV
+Account Number: PPCTV-2024-001
+Status: active
+Linked User: ppctv@biller.com (password: BillerPass123!)
+
+## Insurance Billers
+--------------------
+Biller Name: Forte Insurance
+Category: Insurance
+Account Number: FORTE-INS-001
+Status: active
+Linked User: forte@biller.com (password: BillerPass123!)
+
+Biller Name: Cambodia Life Insurance
+Category: Insurance
+Account Number: CAM-LIFE-001
+Status: active
+Linked User: camblife@biller.com (password: BillerPass123!)
+
+## Tax Billers
+--------------
+Biller Name: General Department of Taxation
+Category: Tax
+Account Number: GDT-TAX-001
+Status: active
+Linked User: gdt@biller.com (password: BillerPass123!)
+
+
+# =========================================================
+# USER ACCOUNT FOR LOGIN
+# =========================================================
+
+User Type: Customer
+--------------------
+Full Name: John Doe
+Email: john@example.com
+Phone: +85512345678
+Username: john@example.com
+Password: TestPass123!
+Role: customer
+Status: active
+
+Note: After creating this user, you need to:
+1. Create a wallet for this user
+2. Complete KYC verification (upload ID documents)
+3. Set up transaction PIN in profile
+
+
+# =========================================================
+# DJANGO SHELL COMMANDS (Create Billers with Users & Wallets)
+# =========================================================
+# Run these in Django shell (python manage.py shell)
+
+"""
+from wallet.models import Biller, User, Wallet
+from wallet.serializers import generate_wallet_number
+from django.contrib.auth.hashers import make_password
+from decimal import Decimal
+
+# Biller data with user credentials
+billers_data = [
+    {"biller_name": "Electricite du Cambodge (EDC)", "category": "Electricity", "account_number": "1234567890", "email": "edc@biller.com"},
+    {"biller_name": "Cambodia Electricity (CE)", "category": "Electricity", "account_number": "ELEC-2024-001", "email": "ce@biller.com"},
+    {"biller_name": "Phnom Penh Water Supply Authority (PPWSA)", "category": "Water", "account_number": "9876543210", "email": "ppwsa@biller.com"},
+    {"biller_name": "Siem Reap Water Supply", "category": "Water", "account_number": "WATER-SR-001", "email": "srwater@biller.com"},
+    {"biller_name": "Metfone Internet", "category": "Internet", "account_number": "META-INT-001", "email": "metfone@biller.com"},
+    {"biller_name": "Cellcard Internet", "category": "Internet", "account_number": "CELL-INT-002", "email": "cellcard@biller.com"},
+    {"biller_name": "Smart Internet", "category": "Internet", "account_number": "SMART-NET-003", "email": "smart@biller.com"},
+    {"biller_name": "Metfone Mobile", "category": "Phone", "account_number": "META-MOB-001", "email": "metfonemobile@biller.com"},
+    {"biller_name": "Cellcard Mobile", "category": "Phone", "account_number": "CELL-MOB-002", "email": "cellcardmobile@biller.com"},
+    {"biller_name": "Smart Mobile", "category": "Phone", "account_number": "SMART-MOB-003", "email": "smartmobile@biller.com"},
+    {"biller_name": "Cambodian Television (CTV)", "category": "TV", "account_number": "CTV-SUB-001", "email": "ctv@biller.com"},
+    {"biller_name": "PPCTV", "category": "TV", "account_number": "PPCTV-2024-001", "email": "ppctv@biller.com"},
+    {"biller_name": "Forte Insurance", "category": "Insurance", "account_number": "FORTE-INS-001", "email": "forte@biller.com"},
+    {"biller_name": "Cambodia Life Insurance", "category": "Insurance", "account_number": "CAM-LIFE-001", "email": "camblife@biller.com"},
+    {"biller_name": "General Department of Taxation", "category": "Tax", "account_number": "GDT-TAX-001", "email": "gdt@biller.com"},
+]
+
+biller_password = "BillerPass123!"
+
+for data in billers_data:
+    # Create or get user for biller
+    user, user_created = User.objects.get_or_create(
+        email=data["email"],
+        defaults={
+            "username": data["email"],
+            "full_name": data["biller_name"],
+            "phone": "+85500000000",
+            "role": "biller",
+            "status": "active"
+        }
+    )
+    
+    if user_created:
+        user.set_password(biller_password)
+        user.save()
+        print(f"Created biller user: {user.email}")
+    
+    # Create wallet for biller if not exists
+    if not user.wallets.exists():
+        wallet = Wallet.objects.create(
+            user=user,
+            wallet_number=generate_wallet_number(user),
+            currency='KHR',
+            balance=Decimal('0.00')
+        )
+        print(f"Created wallet for {user.email}: {wallet.wallet_number}")
+    
+    # Create or get biller
+    biller, biller_created = Biller.objects.get_or_create(
+        biller_name=data["biller_name"],
+        defaults={
+            "user": user,
+            "category": data["category"],
+            "account_number": data["account_number"],
+            "status": "active"
+        }
+    )
+    
+    if biller_created:
+        print(f"Created biller: {biller.biller_name}")
+    else:
+        # Update existing biller with user
+        if not biller.user:
+            biller.user = user
+            biller.save()
+            print(f"Linked user to existing biller: {biller.biller_name}")
+
+print("\nAll billers created successfully!")
+print(f"Biller login password: {biller_password}")
+
+# Create Customer User
+customer, customer_created = User.objects.get_or_create(
+    email="john@example.com",
+    defaults={
+        "username": "john@example.com",
+        "full_name": "John Doe",
+        "phone": "+85512345678",
+        "role": "customer",
+        "status": "active"
+    }
+)
+
+if customer_created:
+    customer.set_password("TestPass123!")
+    customer.save()
+    
+    # Create wallet for customer
+    customer_wallet = Wallet.objects.create(
+        user=customer,
+        wallet_number=generate_wallet_number(customer),
+        currency='KHR',
+        balance=Decimal('100000.00')  # Start with some balance for testing
+    )
+    print(f"\nCreated customer: {customer.email}")
+    print(f"Created customer wallet: {customer_wallet.wallet_number} with {customer_wallet.balance} {customer_wallet.currency}")
+else:
+    print(f"\nCustomer already exists: {customer.email}")
+"""
+
+
+# =========================================================
+# ADMIN PANEL ACCESS
+# =========================================================
+
+Django Admin URL: http://127.0.0.1:8000/admin/
+Create Superuser: python manage.py createsuperuser
+
+
+# =========================================================
+# LOGIN CREDENTIALS SUMMARY
+# =========================================================
+
+# Customer Login
+Email:    john@example.com
+Password: TestPass123!
+
+# Biller Logins (all use same password)
+Password: BillerPass123!
+
+Biller Emails:
+- edc@biller.com (Electricite du Cambodge)
+- ce@biller.com (Cambodia Electricity)
+- ppwsa@biller.com (Phnom Penh Water Supply)
+- srwater@biller.com (Siem Reap Water Supply)
+- metfone@biller.com (Metfone Internet)
+- cellcard@biller.com (Cellcard Internet)
+- smart@biller.com (Smart Internet)
+- metfonemobile@biller.com (Metfone Mobile)
+- cellcardmobile@biller.com (Cellcard Mobile)
+- smartmobile@biller.com (Smart Mobile)
+- ctv@biller.com (Cambodian Television)
+- ppctv@biller.com (PPCTV)
+- forte@biller.com (Forte Insurance)
+- camblife@biller.com (Cambodia Life Insurance)
+- gdt@biller.com (General Department of Taxation)
+
+
+# =========================================================
+# HOW IT WORKS
+# =========================================================
+
+1. Customer logs in and pays a bill:
+   - Select Category (e.g., Electricity)
+   - Select Biller (e.g., Electricite du Cambodge)
+   - Enter Amount
+   - Confirm with PIN
+
+2. System transfers money:
+   - Deducts from customer wallet
+   - Credits biller's wallet (if biller has a user account)
+   - Creates transaction records for both
+
+3. Biller can log in to check:
+   - Go to "Accounts" to see wallet balance
+   - Go to "Transactions" to see payment history
+   - View "Bill Payment Received" transactions
+
+4. Admin can check in Django Admin:
+   - Go to /admin/wallet/biller/
+   - See "Wallet Balance" column showing biller's credit

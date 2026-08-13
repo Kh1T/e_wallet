@@ -34,6 +34,18 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
           Top Up
         </a>
+        <a href="{% url 'bill_payment' %}" class="flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-3 text-sm font-bold text-white transition hover:bg-amber-600">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+          </svg>
+          Pay Bill
+        </a>
+        <a href="{% url 'reports' %}" class="flex items-center justify-center gap-2 rounded-xl bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/20">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+          </svg>
+          Reports
+        </a>
       </div>
     </div>
   </section>
@@ -50,15 +62,28 @@
       {% for tx in transactions %}
       <article class="flex flex-col gap-4 px-6 py-5 transition hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between">
         <div class="flex items-start gap-4">
-          <div class="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl {% if tx.transaction_type == 'topup' %}bg-emerald-50{% else %}bg-red-50{% endif %}">
+          <div class="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl
+            {% if tx.transaction_type == 'topup' %}bg-emerald-50
+            {% elif tx.transaction_type == 'bill_payment' %}bg-amber-50
+            {% else %}bg-red-50{% endif %}">
             {% if tx.transaction_type == 'topup' %}
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            {% elif tx.transaction_type == 'bill_payment' %}
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+            </svg>
             {% else %}
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             {% endif %}
           </div>
           <div>
-            <h3 class="text-sm font-bold capitalize text-slate-800">{{ tx.transaction_type }}</h3>
+            <h3 class="text-sm font-bold capitalize text-slate-800">
+              {% if tx.transaction_type == 'bill_payment' %}
+                {{ tx.billpayment.bill_type|default:'Bill'|capfirst }} Bill
+              {% else %}
+                {{ tx.transaction_type }}
+              {% endif %}
+            </h3>
             <p class="mt-1 text-sm text-slate-500">{{ tx.description|default:'No description' }}</p>
             <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-400">
               <span>{{ tx.created_at|date:"M d, Y g:i A" }}</span>
@@ -69,7 +94,10 @@
           </div>
         </div>
         <div class="sm:text-right">
-          <p class="text-base font-extrabold {% if tx.transaction_type == 'topup' %}text-emerald-600{% else %}text-red-500{% endif %}">
+          <p class="text-base font-extrabold
+            {% if tx.transaction_type == 'topup' %}text-emerald-600
+            {% elif tx.transaction_type == 'bill_payment' %}text-amber-600
+            {% else %}text-red-500{% endif %}">
             {% if tx.transaction_type == 'topup' %}+{% else %}-{% endif %}{{ wallet.currency|default:'KHR' }} {{ tx.amount }}
           </p>
           <span class="mt-2 inline-flex rounded-full px-2.5 py-1 text-xs font-bold {% if tx.status == 'completed' %}bg-emerald-50 text-emerald-700{% elif tx.status == 'failed' %}bg-red-50 text-red-700{% else %}bg-amber-50 text-amber-700{% endif %}">

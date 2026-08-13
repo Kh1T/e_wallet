@@ -35,11 +35,28 @@ class Merchant(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 class Biller(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True, related_name='biller_profile')
     biller_name = models.CharField(max_length=255)
     category = models.CharField(max_length=100, null=True, blank=True)
     account_number = models.CharField(max_length=100, null=True, blank=True)
     status = models.CharField(max_length=50, default='active')
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.biller_name
+
+    @property
+    def wallet(self):
+        """Get the biller's wallet (if they have a user account)."""
+        if self.user:
+            return self.user.wallets.first()
+        return None
+
+    @property
+    def balance(self):
+        """Get the biller's wallet balance."""
+        wallet = self.wallet
+        return wallet.balance if wallet else Decimal('0.00')
 
 class Transaction(models.Model):
     wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name='transactions')
@@ -53,8 +70,19 @@ class Transaction(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 class Notification(models.Model):
+    NOTIFICATION_TYPES = [
+        ('transfer', 'Transfer'),
+        ('bill_payment', 'Bill Payment'),
+        ('topup', 'Top Up'),
+        ('withdrawal', 'Withdrawal'),
+        ('security', 'Security'),
+        ('kyc', 'KYC'),
+        ('wallet', 'Wallet'),
+        ('system', 'System'),
+    ]
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     transaction = models.ForeignKey(Transaction, on_delete=models.SET_NULL, null=True, blank=True)
+    notification_type = models.CharField(max_length=50, choices=NOTIFICATION_TYPES, default='system')
     title = models.CharField(max_length=255)
     message = models.TextField(null=True, blank=True)
     is_read = models.BooleanField(default=False)
@@ -146,6 +174,35 @@ class Transfer(models.Model):
     receiver_wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name='received_transfers')
     created_at = models.DateTimeField(auto_now_add=True)
 
+class BakongPayment(models.Model):
+    """Track Bakong QR payment transactions."""
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('expired', 'Expired'),
+    ]
+    wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name='bakong_payments')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=3, default='KHR')
+    reference_number = models.CharField(max_length=100, unique=True)
+    qr_code = models.TextField(null=True, blank=True)  # Base64 encoded QR image
+    # The MD5 of the exact KHQR payload. Bakong uses this value to look up a
+    # completed transaction through /v1/check_transaction_by_md5.
+    bakong_md5 = models.CharField(max_length=32, null=True, blank=True, db_index=True)
+    bakong_tx_id = models.CharField(max_length=255, null=True, blank=True)
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='pending')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField()
+    webhook_payload = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Bakong {self.reference_number} - {self.amount} {self.currency}"
+
 class FraudDetection(models.Model):
     transaction = models.ForeignKey(Transaction, on_delete=models.CASCADE)
     risk_score = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
@@ -161,4 +218,3 @@ def create_user_security_and_limits(sender, instance, created, **kwargs):
     if created:
         Security.objects.get_or_create(user=instance)
         TransactionLimit.objects.get_or_create(user=instance)
-

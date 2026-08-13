@@ -39,11 +39,17 @@ urlpatterns = [
     path('wallet-management/', views.WalletManagementView.as_view(), name='wallet_management'),
     path('send/',         views.SendMoneyView.as_view(),    name='send'),
     path('topup/',        views.TopupView.as_view(),        name='topup'),
+    path('bill-payment/', views.BillPaymentPageView.as_view(), name='bill_payment'),
     path('profile/',      views.ProfileView.as_view(),      name='profile'),
     path('kyc/',          views.KYCVerificationView.as_view(), name='kyc'),
     path('reports/',       views.UserReportsView.as_view(),   name='reports'),
     path('kyc-review/',   views.KYCReviewView.as_view(),     name='kyc_review'),
     path('notifications/', views.NotificationListView.as_view(), name='notifications'),
+    
+    # ── Bakong Payment routes ───────────────────────────────────────
+    path('bakong-topup/', views.BakongTopupView.as_view(), name='bakong_topup'),
+    path('bakong-qr/<int:payment_id>/', views.BakongQRDisplayView.as_view(), name='bakong_qr_display'),
+    path('bakong-history/', views.BakongPaymentHistoryView.as_view(), name='bakong_history'),
 
     # ── Auth API endpoints (JWT) ────────────────────────────────────
     path('api/auth/register/',        views.RegisterView.as_view(),       name='auth-register'),
@@ -65,6 +71,11 @@ urlpatterns = [
     # ── Admin API endpoints ─────────────────────────────────────────
     path('api/admin/transactions/',         views.AdminAllTransactionsView.as_view(),   name='admin-transactions'),
     path('api/admin/transactions/summary/',  views.AdminTransactionSummaryView.as_view(), name='admin-transactions-summary'),
+    
+    # ── Bakong API endpoints ────────────────────────────────────────
+    path('api/bakong/verify/', views.BakongVerifyTransactionAPI.as_view(), name='bakong-verify-transaction'),
+    path('api/bakong/payment/<int:payment_id>/status/', views.BakongPaymentStatusAPI.as_view(), name='bakong-payment-status'),
+    path('webhooks/bakong/', views.BakongWebhookView.as_view(), name='bakong-webhook'),
 
     # ── Resource API endpoints (CRUD) ───────────────────────────────
     path('api/', include(router.urls)),
