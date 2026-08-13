@@ -174,6 +174,32 @@ class Transfer(models.Model):
     receiver_wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name='received_transfers')
     created_at = models.DateTimeField(auto_now_add=True)
 
+class BakongPayment(models.Model):
+    """Track Bakong QR payment transactions."""
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('expired', 'Expired'),
+    ]
+    wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name='bakong_payments')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=3, default='KHR')
+    reference_number = models.CharField(max_length=100, unique=True)
+    qr_code = models.TextField(null=True, blank=True)  # Base64 encoded QR image
+    bakong_tx_id = models.CharField(max_length=255, null=True, blank=True)
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='pending')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField()
+    webhook_payload = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Bakong {self.reference_number} - {self.amount} {self.currency}"
+
 class FraudDetection(models.Model):
     transaction = models.ForeignKey(Transaction, on_delete=models.CASCADE)
     risk_score = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)

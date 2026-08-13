@@ -210,6 +210,16 @@
           <span class="sidebar-link-text">Top Up</span>
         </a>
 
+        <a href="{% url 'bakong_topup' %}" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all {% if active_page == 'bakong_topup' %}bg-slate-800 text-white{% endif %}" title="Bakong Top Up">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect width="5" height="5" x="3" y="3" rx="1"/>
+            <rect width="5" height="5" x="16" y="3" rx="1"/>
+            <rect width="5" height="5" x="3" y="16" rx="1"/>
+            <path d="M16 16h.01M19 16h2v2M16 21h2M21 21v.01M12 7v3a2 2 0 0 1-2 2H7M3 12h.01M12 3h.01M12 16v.01M16 12h1M21 12v.01M12 21v-1"/>
+          </svg>
+          <span class="sidebar-link-text">Bakong Top Up</span>
+        </a>
+
         <a href="{% url 'bill_payment' %}" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all {% if active_page == 'bill_payment' %}bg-slate-800 text-white{% endif %}" title="Pay Bill">
           <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>

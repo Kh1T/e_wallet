@@ -180,3 +180,10 @@ FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 
 # ── Default primary key field type ────────────────────────────────
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# ── Bakong Payment Configuration ───────────────────────────────────
+BAKONG_TOKEN = os.getenv('BAKONG_TOKEN', '')
+BAKONG_ACCOUNT_ID = os.getenv('BAKONG_ACCOUNT_ID', '')
+BAKONG_MERCHANT_NAME = os.getenv('BAKONG_MERCHANT_NAME', '')
+BAKONG_MERCHANT_CITY = os.getenv('BAKONG_MERCHANT_CITY', 'Phnom Penh')
+BAKONG_API_URL = os.getenv('BAKONG_API_URL', 'https://api.bakong.money')
