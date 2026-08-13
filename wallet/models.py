@@ -187,6 +187,9 @@ class BakongPayment(models.Model):
     currency = models.CharField(max_length=3, default='KHR')
     reference_number = models.CharField(max_length=100, unique=True)
     qr_code = models.TextField(null=True, blank=True)  # Base64 encoded QR image
+    # The MD5 of the exact KHQR payload. Bakong uses this value to look up a
+    # completed transaction through /v1/check_transaction_by_md5.
+    bakong_md5 = models.CharField(max_length=32, null=True, blank=True, db_index=True)
     bakong_tx_id = models.CharField(max_length=255, null=True, blank=True)
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='pending')
     created_at = models.DateTimeField(auto_now_add=True)
@@ -215,4 +218,3 @@ def create_user_security_and_limits(sender, instance, created, **kwargs):
     if created:
         Security.objects.get_or_create(user=instance)
         TransactionLimit.objects.get_or_create(user=instance)
-

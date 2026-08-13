@@ -185,5 +185,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 BAKONG_TOKEN = os.getenv('BAKONG_TOKEN', '')
 BAKONG_ACCOUNT_ID = os.getenv('BAKONG_ACCOUNT_ID', '')
 BAKONG_MERCHANT_NAME = os.getenv('BAKONG_MERCHANT_NAME', '')
-BAKONG_MERCHANT_CITY = os.getenv('BAKONG_MERCHANT_CITY', 'Phnom Penh')
-BAKONG_API_URL = os.getenv('BAKONG_API_URL', 'https://api.bakong.money')
+BAKONG_MERCHANT_CITY = os.getenv('BAKONG_MERCHANT_CITY', '')
+# Bakong's production API base URL.  Set this to
+# https://sit-api-bakong.nbc.gov.kh when using a SIT token.
+BAKONG_API_URL = os.getenv('BAKONG_API_URL', 'https://api-bakong.nbc.gov.kh')

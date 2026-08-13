@@ -73,6 +73,7 @@ urlpatterns = [
     path('api/admin/transactions/summary/',  views.AdminTransactionSummaryView.as_view(), name='admin-transactions-summary'),
     
     # ── Bakong API endpoints ────────────────────────────────────────
+    path('api/bakong/verify/', views.BakongVerifyTransactionAPI.as_view(), name='bakong-verify-transaction'),
     path('api/bakong/payment/<int:payment_id>/status/', views.BakongPaymentStatusAPI.as_view(), name='bakong-payment-status'),
     path('webhooks/bakong/', views.BakongWebhookView.as_view(), name='bakong-webhook'),
 

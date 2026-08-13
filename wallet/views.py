@@ -2745,6 +2745,9 @@ import base64
 import json
 import hashlib
 import hmac
+from bakong_khqr import KHQR
+from urllib import error as urlerror
+from urllib import request as urlrequest
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 
@@ -2800,8 +2803,12 @@ class BakongTopupView(LoginRequiredMixin, View):
             amount = Decimal(amount)
             if amount <= 0:
                 raise ValueError
+            # KHQR only permits whole-number KHR amounts.  Do not silently
+            # truncate a value such as 1000.50 to 1000 in the QR payload.
+            if currency == 'KHR' and amount != amount.to_integral_value():
+                raise ValueError
         except (ValueError, TypeError):
-            messages.error(request, 'Invalid amount.')
+            messages.error(request, 'Invalid amount. KHR amounts must be whole numbers.')
             return redirect('bakong_topup')
 
         # Generate unique reference number
@@ -2817,115 +2824,46 @@ class BakongTopupView(LoginRequiredMixin, View):
             expires_at=expires_at,
         )
 
-        # Generate Bakong QR data (KHQR format)
-        # This follows the Bakong KHQR specification
-        qr_data = self._generate_bakong_qr(bakong_payment)
+        # Generate Bakong QR data (KHQR format).
+        try:
+            qr_data = self._generate_bakong_qr(bakong_payment)
+        except ValueError as exc:
+            bakong_payment.delete()
+            messages.error(request, str(exc))
+            return redirect('bakong_topup')
         
-        # Store QR data
+        # Bakong verifies the MD5 of the *exact* KHQR string it received.
+        # Store it with the payment so status polling can use the official API.
         bakong_payment.qr_code = qr_data
-        bakong_payment.save()
+        bakong_payment.bakong_md5 = KHQR().generate_md5(qr_data)
+        bakong_payment.save(update_fields=['qr_code', 'bakong_md5', 'updated_at'])
 
         messages.info(request, f'Please scan the QR code with Bakong app to complete payment. Reference: {reference_number}')
         
         return redirect('bakong_qr_display', payment_id=bakong_payment.id)
 
     def _generate_bakong_qr(self, payment):
-        """Generate Bakong KHQR format data following EMVCo standard."""
-        # KHQR (Cambodia QR Code) follows EMVCo QR code specifications
-        # Format: [Tag][Length][Value]
-        
-        def tlv(tag, value):
-            """Create TLV (Tag-Length-Value) format."""
-            if value is None or value == '':
-                return ''
-            value_str = str(value)
-            length = len(value_str)
-            return f'{tag}{length:02d}{value_str}'
-        
-        # Build the QR payload according to KHQR/EMVCo standard
-        qr_parts = []
-        
-        # Payload Format Indicator (00) - Fixed value '01'
-        qr_parts.append('000201')
-        
-        # Point of Initiation Method (01) - '12' for dynamic QR
-        qr_parts.append('011212')
-        
-        # Merchant Account Information (29) - Bakong specific
-        # This contains the mobile number/account ID for receiving payments
+        """Generate dynamic KHQR through the Python KHQR SDK."""
         bakong_account = settings.BAKONG_ACCOUNT_ID
         if not bakong_account:
-            # Fallback: use a placeholder if not configured
-            bakong_account = '0000000000'
-        
-        # Format: 29[length][00 length khqr@bakong][01 length account]
-        # Global Unique Identifier for Bakong
-        gui = 'khqr@bakong'
-        gui_tlv = f'00{len(gui):02d}{gui}'
-        # Mobile/Account ID
-        account_tlv = f'01{len(bakong_account):02d}{bakong_account}'
-        merchant_info = gui_tlv + account_tlv
-        qr_parts.append(f'29{len(merchant_info):02d}{merchant_info}')
-        
-        # Merchant Category Code (52) - Required field, default 5999 for other
-        qr_parts.append(tlv('52', '5999'))
-        
-        # Transaction Currency (53) - Required field
-        # 116 = KHR (Cambodian Riel), 840 = USD
-        if payment.currency == 'KHR':
-            currency_code = '116'
-        else:
-            currency_code = '840'
-        qr_parts.append(tlv('53', currency_code))
-        
-        # Transaction Amount (54) - Only include if amount > 0
-        if payment.amount and payment.amount > 0:
-            # For KHR, use whole numbers. For USD, use decimal
-            if payment.currency == 'KHR':
-                amount_str = str(int(payment.amount))
-            else:
-                amount_str = str(payment.amount)
-            qr_parts.append(tlv('54', amount_str))
-        
-        # Country Code (58) - KH for Cambodia
-        qr_parts.append(tlv('58', 'KH'))
-        
-        # Merchant Name (59)
+            raise ValueError('BAKONG_ACCOUNT_ID must be configured before generating a QR code.')
+        if '@' not in bakong_account or len(bakong_account) > 32:
+            raise ValueError('BAKONG_ACCOUNT_ID must be a valid Bakong ID (for example name@bkrt).')
+
         merchant_name = settings.BAKONG_MERCHANT_NAME or 'NexusPay'
-        qr_parts.append(tlv('59', merchant_name))
-        
-        # Merchant City (60)
         merchant_city = settings.BAKONG_MERCHANT_CITY or 'Phnom Penh'
-        qr_parts.append(tlv('60', merchant_city))
-        
-        # Additional Data Field (62) - Reference/Transaction info
-        # Sub-tag 01: Bill Number / Reference
-        # Sub-tag 05: Reference Label
-        ref = payment.reference_number or str(payment.id)
-        additional_data = f'01{len(ref):02d}{ref}'
-        if len(additional_data) <= 99:
-            qr_parts.append(f'62{len(additional_data):02d}{additional_data}')
-        
-        # Calculate CRC (63)
-        # CRC is calculated over all data BEFORE the CRC tag itself
-        payload_without_crc = ''.join(qr_parts)
-        crc = self._calculate_crc16(payload_without_crc)
-        qr_parts.append(f'6304{crc:04X}')
-        
-        return ''.join(qr_parts)
-    
-    def _calculate_crc16(self, data):
-        """Calculate CRC16-CCITT for KHQR validation."""
-        crc = 0xFFFF
-        for char in data:
-            crc ^= ord(char) << 8
-            for _ in range(8):
-                if crc & 0x8000:
-                    crc = (crc << 1) ^ 0x1021
-                else:
-                    crc <<= 1
-            crc &= 0xFFFF
-        return crc
+        return KHQR().create_qr(
+            account_id=bakong_account,
+            merchant_name=merchant_name,
+            merchant_city=merchant_city,
+            amount=float(payment.amount),
+            currency=payment.currency,
+            bill_number=payment.reference_number or str(payment.id),
+            static=False,
+            # The SDK's minimum QR expiry is one day. The application still
+            # expires and rejects this wallet top-up after ten minutes.
+            expiration=1,
+        )
 
 
 class BakongQRDisplayView(LoginRequiredMixin, View):
@@ -2956,9 +2894,52 @@ class BakongQRDisplayView(LoginRequiredMixin, View):
         ctx = {
             'payment': payment,
             'qr_data': payment.qr_code or '',
+            # Equivalent to `$md5` passed from PaymentController to checkout.
+            # It is safe to send to the browser; the Bakong access token stays
+            # on this server.
+            'bakong_md5': payment.bakong_md5 or '',
             'active_page': 'bakong_topup',
         }
         return render(request, self.template_name, ctx)
+
+
+class BakongVerifyTransactionAPI(APIView):
+    """POST /api/bakong/verify/ — Django equivalent of verifyTransaction()."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        md5 = request.data.get('md5', '')
+        if not isinstance(md5, str) or len(md5) != 32:
+            return Response({'error': 'A valid Bakong MD5 is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            payment = BakongPayment.objects.get(
+                bakong_md5=md5,
+                wallet__user=request.user,
+            )
+        except BakongPayment.DoesNotExist:
+            return Response({'error': 'Payment not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if payment.status == 'pending' and payment.expires_at < timezone.now():
+            payment.status = 'expired'
+            payment.save(update_fields=['status', 'updated_at'])
+
+        if payment.status == 'pending':
+            try:
+                result = BakongPaymentStatusAPI._check_transaction_by_md5(md5)
+            except BakongAPIError as exc:
+                return Response({'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+            if BakongPaymentStatusAPI._is_successful_transaction(result, payment):
+                BakongPaymentStatusAPI._complete_payment(payment, result)
+                payment.refresh_from_db()
+        else:
+            result = {'responseCode': 0 if payment.status == 'completed' else 1, 'data': None}
+
+        # Keep the Bakong response shape used by the Laravel controller and
+        # add our local state so the browser knows whether to finish or retry.
+        result['paymentStatus'] = payment.status
+        return Response(result)
 
 
 class BakongPaymentStatusAPI(APIView):
@@ -2980,7 +2961,23 @@ class BakongPaymentStatusAPI(APIView):
         # Check if expired
         if payment.status == 'pending' and payment.expires_at < timezone.now():
             payment.status = 'expired'
-            payment.save()
+            payment.save(update_fields=['status', 'updated_at'])
+
+        # Match PaymentController::verifyTransaction(): check the MD5 produced
+        # while generating the QR with Bakong's transaction-status API.
+        if payment.status == 'pending':
+            try:
+                result = self._check_transaction_by_md5(payment.bakong_md5)
+                if self._is_successful_transaction(result, payment):
+                    self._complete_payment(payment, result)
+                    payment.refresh_from_db()
+            except BakongAPIError as exc:
+                # A temporary API outage must not mark a pending payment failed.
+                return Response({
+                    'payment_id': payment.id,
+                    'status': payment.status,
+                    'verification_error': str(exc),
+                }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         return Response({
             'payment_id': payment.id,
@@ -2991,6 +2988,83 @@ class BakongPaymentStatusAPI(APIView):
             'created_at': payment.created_at.isoformat(),
             'expires_at': payment.expires_at.isoformat(),
         })
+
+    @staticmethod
+    def _check_transaction_by_md5(md5):
+        if not md5:
+            raise BakongAPIError('This payment has no Bakong MD5 value.')
+        if not settings.BAKONG_TOKEN:
+            raise BakongAPIError('BAKONG_TOKEN is not configured.')
+
+        endpoint = settings.BAKONG_API_URL.rstrip('/') + '/v1/check_transaction_by_md5'
+        body = json.dumps({'md5': md5}).encode('utf-8')
+        request = urlrequest.Request(
+            endpoint,
+            data=body,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {settings.BAKONG_TOKEN}',
+            },
+            method='POST',
+        )
+        try:
+            with urlrequest.urlopen(request, timeout=10) as response:
+                payload = json.loads(response.read().decode('utf-8'))
+        except (urlerror.URLError, urlerror.HTTPError, TimeoutError, json.JSONDecodeError) as exc:
+            raise BakongAPIError('Unable to verify payment with Bakong.') from exc
+        if not isinstance(payload, dict):
+            raise BakongAPIError('Bakong returned an invalid verification response.')
+        return payload
+
+    @staticmethod
+    def _is_successful_transaction(result, payment):
+        """Accept only a successful response whose amount/currency match the QR."""
+        if str(result.get('responseCode')) != '0' or not isinstance(result.get('data'), dict):
+            return False
+        data = result['data']
+        received_amount = data.get('amount', data.get('transactionAmount'))
+        received_currency = data.get('currency', data.get('transactionCurrency'))
+        if received_amount is not None and Decimal(str(received_amount)) != payment.amount:
+            return False
+        if received_currency and str(received_currency).upper() not in {
+            payment.currency.upper(), '116' if payment.currency == 'KHR' else '840'
+        }:
+            return False
+        return True
+
+    @staticmethod
+    def _complete_payment(payment, payload):
+        """Credit exactly once; both API polling and webhook delivery use this."""
+        with db_transaction.atomic():
+            payment = BakongPayment.objects.select_for_update().select_related('wallet__user').get(pk=payment.pk)
+            if payment.status == 'completed':
+                return
+            if payment.status != 'pending':
+                return
+            data = payload.get('data', payload)
+            payment.status = 'completed'
+            payment.bakong_tx_id = data.get('transactionId', data.get('transaction_id', payment.bakong_tx_id))
+            payment.webhook_payload = payload
+            payment.save(update_fields=['status', 'bakong_tx_id', 'webhook_payload', 'updated_at'])
+
+            wallet = payment.wallet
+            wallet.balance += payment.amount
+            wallet.save()
+            tx = Transaction.objects.create(
+                wallet=wallet, transaction_type='topup', amount=payment.amount,
+                status='completed', description=f'Topup via Bakong (Ref: {payment.reference_number})',
+                reference=f'TOP-BKN-{uuid.uuid4().hex[:8].upper()}',
+            )
+            Topup.objects.create(transaction=tx, payment_method='bakong', provider='Bakong')
+            NotificationService.notify_topup_completed(user=wallet.user, amount=payment.amount,
+                currency=wallet.currency, transaction=tx, payment_method='Bakong')
+            Notification.objects.create(user=wallet.user, transaction=tx, notification_type='topup',
+                title='Bakong Topup Successful',
+                message=f'Your wallet has been credited with {payment.amount} {wallet.currency} via Bakong.')
+
+
+class BakongAPIError(Exception):
+    """The Bakong verification service could not provide a usable response."""
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -3027,53 +3101,10 @@ class BakongWebhookView(View):
         except BakongPayment.DoesNotExist:
             return JsonResponse({'error': 'Payment not found'}, status=404)
 
-        # Update payment status
+        # Update payment status. The shared completion method is idempotent, so
+        # a webhook and MD5 polling cannot credit the same payment twice.
         if status_code == 'success' or status_code == 'completed':
-            with db_transaction.atomic():
-                payment.status = 'completed'
-                payment.bakong_tx_id = bakong_tx_id
-                payment.webhook_payload = payload
-                payment.save()
-
-                # Credit the wallet
-                wallet = payment.wallet
-                wallet.balance += payment.amount
-                wallet.save()
-
-                # Create transaction record
-                tx = Transaction.objects.create(
-                    wallet=wallet,
-                    transaction_type='topup',
-                    amount=payment.amount,
-                    status='completed',
-                    description=f'Topup via Bakong (Ref: {reference_number})',
-                    reference=f'TOP-BKN-{uuid.uuid4().hex[:8].upper()}',
-                )
-                
-                # Create Topup record
-                Topup.objects.create(
-                    transaction=tx,
-                    payment_method='bakong',
-                    provider='Bakong',
-                )
-
-                # Notify user
-                NotificationService.notify_topup_completed(
-                    user=wallet.user,
-                    amount=payment.amount,
-                    currency=wallet.currency,
-                    transaction=tx,
-                    payment_method='Bakong'
-                )
-
-                # Create notification
-                Notification.objects.create(
-                    user=wallet.user,
-                    transaction=tx,
-                    notification_type='topup',
-                    title='Bakong Topup Successful',
-                    message=f'Your wallet has been credited with {payment.amount} {wallet.currency} via Bakong.',
-                )
+            BakongPaymentStatusAPI._complete_payment(payment, payload)
 
         elif status_code == 'failed':
             payment.status = 'failed'
