@@ -118,6 +118,28 @@
 
               <!-- Camera Mode -->
               <div id="camera-mode" class="space-y-4">
+                <!-- Permission Request Banner -->
+                <div id="camera-permission-banner" class="rounded-xl bg-blue-50 border border-blue-200 p-4">
+                  <div class="flex items-start gap-3">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                      <circle cx="12" cy="13" r="4"/>
+                    </svg>
+                    <div class="flex-1">
+                      <p class="text-sm font-medium text-blue-800">Camera Permission Required</p>
+                      <p class="text-xs text-blue-700 mt-1">We need access to your camera to take a selfie. Your image will be securely uploaded for verification.</p>
+                      <div class="mt-2 flex gap-2">
+                        <button type="button" onclick="requestCameraPermission()" class="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-blue-700 transition">
+                          Allow Camera Access
+                        </button>
+                        <button type="button" onclick="switchSelfieMode('upload')" class="text-xs text-blue-700 underline hover:no-underline px-2 py-1.5">
+                          Use Upload Instead
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <!-- Camera Error Banner -->
                 <div id="camera-error-banner" class="hidden rounded-xl bg-amber-50 border border-amber-200 p-4">
                   <div class="flex items-start gap-3">
@@ -127,9 +149,20 @@
                       <line x1="12" y1="17" x2="12.01" y2="17"/>
                     </svg>
                     <div class="flex-1">
-                      <p class="text-sm font-medium text-amber-800">Camera Access Issue</p>
-                      <p class="text-xs text-amber-700 mt-1" id="camera-error-message">Unable to access camera. Please use the upload option instead.</p>
-                      <button type="button" onclick="switchSelfieMode('upload')" class="mt-2 text-xs font-semibold text-amber-800 underline hover:no-underline">
+                      <p class="text-sm font-medium text-amber-800">Camera Access Blocked</p>
+                      <p class="text-xs text-amber-700 mt-1" id="camera-error-message">Camera permission was denied.</p>
+                      <div class="mt-2 space-y-1">
+                        <p class="text-xs text-amber-600 font-medium">To enable camera:</p>
+                        <ol class="text-xs text-amber-600 list-decimal list-inside space-y-0.5">
+                          <li>Click the camera icon in your browser's address bar</li>
+                          <li>Select "Allow" for camera access</li>
+                          <li>Refresh the page and try again</li>
+                        </ol>
+                        <button type="button" onclick="showPermissionInstructions()" class="mt-2 text-xs text-amber-800 underline hover:no-underline">
+                          Show detailed instructions
+                        </button>
+                      </div>
+                      <button type="button" onclick="switchSelfieMode('upload')" class="mt-3 text-xs font-semibold text-amber-800 underline hover:no-underline">
                         Switch to Upload Mode
                       </button>
                     </div>
@@ -216,12 +249,53 @@
     }
   }
 
+  async function requestCameraPermission() {
+    const permissionBanner = document.getElementById('camera-permission-banner');
+    const errorBanner = document.getElementById('camera-error-banner');
+    
+    // Hide permission banner while requesting
+    if (permissionBanner) {
+      permissionBanner.classList.add('hidden');
+    }
+    if (errorBanner) {
+      errorBanner.classList.add('hidden');
+    }
+    
+    // Try to start camera - this will trigger the browser's permission prompt
+    await startCamera();
+  }
+
+  function showPermissionInstructions() {
+    // Detect browser and show specific instructions
+    const isChrome = /Chrome/.test(navigator.userAgent) && /Google Inc/.test(navigator.vendor);
+    const isFirefox = /Firefox/.test(navigator.userAgent);
+    const isSafari = /Safari/.test(navigator.userAgent) && /Apple Computer/.test(navigator.vendor);
+    const isEdge = /Edg/.test(navigator.userAgent);
+    
+    let instructions = '';
+    
+    if (isChrome) {
+      instructions = 'Chrome:\\n1. Click the lock/info icon in the address bar\\n2. Click "Site settings"\\n3. Find "Camera" and set to "Allow"\\n4. Refresh the page';
+    } else if (isFirefox) {
+      instructions = 'Firefox:\\n1. Click the lock icon in the address bar\\n2. Click the X next to "Blocked" for Camera\\n3. Select "Allow"\\n4. Refresh the page';
+    } else if (isSafari) {
+      instructions = 'Safari:\\n1. Go to Safari menu > Settings\\n2. Click Websites tab\\n3. Select Camera\\n4. Find this site and set to "Allow"\\n5. Refresh the page';
+    } else if (isEdge) {
+      instructions = 'Edge:\\n1. Click the lock icon in the address bar\\n2. Click "Site permissions"\\n3. Set Camera to "Allow"\\n4. Refresh the page';
+    } else {
+      instructions = 'Browser:\\n1. Check your browser settings for site permissions\\n2. Find Camera permissions\\n3. Allow camera access for this site\\n4. Refresh the page';
+    }
+    
+    alert(instructions);
+  }
+
   async function startCamera() {
     const video = document.getElementById('camera-video');
     const placeholder = document.getElementById('camera-placeholder');
     const startBtn = document.getElementById('btn-start-camera');
     const errorBanner = document.getElementById('camera-error-banner');
     const errorMessageEl = document.getElementById('camera-error-message');
+    const permissionBanner = document.getElementById('camera-permission-banner');
     
     // Hide any previous error
     if (errorBanner) {
@@ -267,6 +341,11 @@
       
       stream = await navigator.mediaDevices.getUserMedia(constraints);
       
+      // Hide permission banner on success
+      if (permissionBanner) {
+        permissionBanner.classList.add('hidden');
+      }
+      
       video.srcObject = stream;
       placeholder.classList.add('hidden');
       video.classList.remove('hidden');
@@ -284,16 +363,22 @@
       let errorMessage = 'Unable to access camera. ';
       
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        errorMessage += 'Camera permission was denied. Please allow camera access in your browser settings, or use the upload option instead.';
+        errorMessage = 'Camera permission was denied. Please click "Allow" when prompted, or enable it in your browser settings.';
       } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        errorMessage += 'No camera found on your device. Please use the upload option instead.';
+        errorMessage = 'No camera found on your device. Please use the upload option instead.';
       } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
-        errorMessage += 'Camera is already in use by another application. Please close other apps using the camera, or use the upload option instead.';
+        errorMessage = 'Camera is already in use by another application. Please close other apps using the camera.';
       } else if (err.name === 'OverconstrainedError') {
         // Try again with simpler constraints
         try {
           console.log('Retrying with simpler constraints...');
           stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          
+          // Hide permission banner on success
+          if (permissionBanner) {
+            permissionBanner.classList.add('hidden');
+          }
+          
           video.srcObject = stream;
           placeholder.classList.add('hidden');
           video.classList.remove('hidden');
@@ -301,22 +386,19 @@
           document.getElementById('btn-capture').classList.remove('hidden');
           return;
         } catch (retryErr) {
-          errorMessage += 'Camera does not support the required resolution. Please use the upload option instead.';
+          errorMessage = 'Camera does not support the required resolution. Please use the upload option instead.';
         }
       } else {
-        errorMessage += 'Please make sure you have granted camera permissions or use the upload option instead.';
+        errorMessage = 'Could not access camera. Please make sure you have granted camera permissions.';
       }
       
-      // Show error banner instead of alert
+      // Show error banner
       if (errorBanner && errorMessageEl) {
         errorMessageEl.textContent = errorMessage;
         errorBanner.classList.remove('hidden');
       } else {
         alert(errorMessage);
       }
-      
-      // Keep the camera mode visible but show error, let user switch manually
-      // or they can click the "Switch to Upload Mode" button
     }
   }
 
