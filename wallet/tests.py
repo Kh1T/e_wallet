@@ -197,6 +197,61 @@ class TransactionListViewTests(TestCase):
         self.assertContains(response, 'TRF-TEST123')
 
 
+class AccountStatementDownloadTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='statement@example.com', email='statement@example.com',
+            password='StrongPass123', full_name='Statement User', phone='099999991',
+        )
+        self.wallet = Wallet.objects.create(
+            user=self.user, wallet_number='WAL-STATEMENT', balance=Decimal('160.00'), currency='USD',
+        )
+        self.other_user = User.objects.create_user(
+            username='other@example.com', email='other@example.com',
+            password='StrongPass123', full_name='Other User', phone='099999992',
+        )
+        self.other_wallet = Wallet.objects.create(
+            user=self.other_user, wallet_number='WAL-OTHER', balance=Decimal('10.00'), currency='USD',
+        )
+        sender = User.objects.create_user(
+            username='sender@example.com', email='sender@example.com',
+            password='StrongPass123', full_name='Sender User', phone='099999993',
+        )
+        sender_wallet = Wallet.objects.create(
+            user=sender, wallet_number='WAL-SENDER', balance=Decimal('50.00'), currency='USD',
+        )
+        Transaction.objects.create(wallet=self.wallet, transaction_type='topup', amount=Decimal('50.00'), status='completed')
+        Transaction.objects.create(wallet=self.wallet, transaction_type='bill_payment', amount=Decimal('20.00'), status='completed')
+        incoming = Transaction.objects.create(wallet=sender_wallet, transaction_type='transfer', amount=Decimal('30.00'), status='completed')
+        Transfer.objects.create(transaction=incoming, sender_wallet=sender_wallet, receiver_wallet=self.wallet)
+
+    def test_statement_download_is_a_pdf_with_server_calculated_balances(self):
+        self.client.login(username='statement@example.com', password='StrongPass123')
+        response = self.client.get(reverse('account_statement_download'), {
+            'period': 'this_month', 'wallet_id': self.wallet.id,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/pdf')
+        self.assertIn('attachment; filename="statement_', response['Content-Disposition'])
+        self.assertTrue(response.content.startswith(b'%PDF'))
+
+    def test_statement_rejects_invalid_period_and_other_users_wallet(self):
+        self.client.login(username='statement@example.com', password='StrongPass123')
+        invalid_period = self.client.get(reverse('account_statement_download'), {'period': 'all_time'})
+        other_wallet = self.client.get(reverse('account_statement_download'), {
+            'period': 'this_month', 'wallet_id': self.other_wallet.id,
+        })
+
+        self.assertEqual(invalid_period.status_code, 400)
+        self.assertEqual(other_wallet.status_code, 404)
+
+    def test_statement_requires_login(self):
+        response = self.client.get(reverse('account_statement_download'), {'period': 'this_month'})
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse('login'), response['Location'])
+
+
 class WalletManagementViewTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(
@@ -400,4 +455,3 @@ class TransferSecurityTests(TestCase):
         })
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Invalid transaction PIN.')
-

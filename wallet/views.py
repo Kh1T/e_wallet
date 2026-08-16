@@ -11,6 +11,7 @@ from django.urls import reverse
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
+from django.http import Http404
 from django.views import View
 from django.db import transaction as db_transaction
 from django.db.models import Sum, Q
@@ -61,7 +62,7 @@ def _set_jwt_cookies(response, access_token, refresh_token=None):
         )
     return response
 
-from django.http import JsonResponse
+from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from .models import (
     User, Wallet, Merchant, Biller, Transaction, Notification, IdentityVerification,
     Security, TransactionLimit, AuditLog, Report, Analytics, Backup, MerchantQR,
@@ -84,6 +85,8 @@ from .forms import (
     ChangePinForm, ForgotPasswordForm, ResetPasswordForm,
 )
 from .services import NotificationService
+from .services.statement_pdf import generate_statement_pdf
+from .services.statements import build_statement, get_statement_period
 
 
 # ─────────────────────────────────────────
@@ -386,6 +389,35 @@ class TransactionListView(LoginRequiredMixin, View):
             'active_page':          'transactions',
         }
         return render(request, 'wallet/transactions.html', ctx)
+
+
+class AccountStatementDownloadView(LoginRequiredMixin, View):
+    """Generate a PDF statement for an authenticated user's own wallet."""
+    login_url = '/login/'
+
+    def get(self, request):
+        period = request.GET.get('period')
+        try:
+            start, end = get_statement_period(period)
+        except ValueError:
+            return HttpResponseBadRequest('Invalid statement period.')
+
+        wallet_id = request.GET.get('wallet_id')
+        wallets = Wallet.objects.filter(user=request.user)
+        if wallet_id:
+            if not wallet_id.isdigit():
+                raise Http404('Wallet not found.')
+            wallet = get_object_or_404(wallets, pk=wallet_id)
+        else:
+            wallet = get_object_or_404(wallets.order_by('created_at'))
+
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        statement = build_statement(wallet, start, end)
+        pdf = generate_statement_pdf(wallet, request.user, verification, statement)
+        filename = f"statement_{start:%Y%m%d}_{end:%Y%m%d}.pdf"
+        response = HttpResponse(pdf, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
 
 
 class CreateWalletView(LoginRequiredMixin, View):

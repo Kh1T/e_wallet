@@ -35,6 +35,7 @@ urlpatterns = [
     path('dashboard/',    views.DashboardView.as_view(),    name='dashboard'),
     path('accounts/',     views.AccountsView.as_view(),   name='accounts'),
     path('transactions/', views.TransactionListView.as_view(), name='transactions'),
+    path('accounts/statement/download/', views.AccountStatementDownloadView.as_view(), name='account_statement_download'),
     path('create-wallet/', views.CreateWalletView.as_view(), name='create_wallet'),
     path('wallet-management/', views.WalletManagementView.as_view(), name='wallet_management'),
     path('send/',         views.SendMoneyView.as_view(),    name='send'),
