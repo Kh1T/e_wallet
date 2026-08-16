@@ -9,3 +9,4 @@ qrcode>=7.4.2
 pillow>=10.0.0
 cloudinary>=1.36.0
 bakong-khqr>=0.6,<0.7
+reportlab>=4.2,<5.0

@@ -8,6 +8,10 @@ from django.shortcuts import render
 from django.urls import path
 from datetime import datetime, timedelta
 from decimal import Decimal
+import csv
+import openpyxl
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from django.http import HttpResponse
 
 from .models import (
     IdentityVerification, Notification, Transaction, Transfer, Wallet,
@@ -121,6 +125,90 @@ def refund_transaction(modeladmin, request, queryset):
 refund_transaction.short_description = 'Refund selected transfer transactions'
 
 
+def export_to_excel(modeladmin, request, queryset):
+    """Export selected transactions to Excel (.xlsx format) with styling."""
+    response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    response['Content-Disposition'] = 'attachment; filename="transactions.xlsx"'
+    
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Transactions"
+    
+    # Define Styles
+    title_font = Font(name='Calibri', size=16, bold=True, color="003366")
+    header_font = Font(name='Calibri', size=11, bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="0066CC", end_color="0066CC", fill_type="solid")
+    regular_font = Font(name='Calibri', size=11)
+    
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), 
+                         top=Side(style='thin'), bottom=Side(style='thin'))
+    
+    # Title Row
+    ws.merge_cells('A1:H1')
+    title_cell = ws['A1']
+    title_cell.value = 'E-Wallet Transaction Report'
+    title_cell.font = title_font
+    title_cell.alignment = Alignment(horizontal='center', vertical='center')
+    ws.row_dimensions[1].height = 30
+    
+    # Metadata Rows
+    ws['A3'] = 'Generated on:'
+    ws['B3'] = timezone.now().strftime('%Y-%m-%d %H:%M:%S')
+    ws['A4'] = 'Total Records:'
+    ws['B4'] = queryset.count()
+    
+    for row in range(3, 5):
+        ws[f'A{row}'].font = Font(name='Calibri', size=11, bold=True)
+        ws[f'B{row}'].font = regular_font
+    
+    # Table Headers
+    headers = ['Transaction Reference', 'Transaction Type', 'Amount', 'Currency', 'Status', 'Date & Time', 'Wallet Owner Info', 'Description']
+    row_num = 6
+    for col_num, header in enumerate(headers, 1):
+        cell = ws.cell(row=row_num, column=col_num)
+        cell.value = header
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = thin_border
+    ws.row_dimensions[row_num].height = 20
+    
+    # Data Rows
+    row_num += 1
+    for obj in queryset:
+        currency = obj.wallet.currency if obj.wallet else 'N/A'
+        owner = f"{obj.wallet.user.full_name} ({obj.wallet.user.email})" if obj.wallet and obj.wallet.user else 'N/A'
+        
+        row_data = [
+            obj.reference,
+            obj.transaction_type,
+            float(obj.amount) if obj.amount else 0,
+            currency,
+            obj.status,
+            obj.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+            owner,
+            obj.description or ''
+        ]
+        
+        for col_num, value in enumerate(row_data, 1):
+            cell = ws.cell(row=row_num, column=col_num)
+            cell.value = value
+            cell.font = regular_font
+            cell.border = thin_border
+            cell.alignment = Alignment(vertical='center')
+        row_num += 1
+        
+    # Set Column Widths for readability
+    column_widths = {'A': 25, 'B': 18, 'C': 15, 'D': 10, 'E': 12, 'F': 22, 'G': 35, 'H': 40}
+    for col, width in column_widths.items():
+        ws.column_dimensions[col].width = width
+        
+    wb.save(response)
+    return response
+
+export_to_excel.short_description = 'Export selected to Excel (.xlsx)'
+
+
 @admin.register(IdentityVerification)
 class IdentityVerificationAdmin(admin.ModelAdmin):
     list_display = (
@@ -204,7 +292,7 @@ class TransactionAdmin(admin.ModelAdmin):
         'wallet__user__full_name', 'description'
     )
     readonly_fields = ('created_at', 'reference')
-    actions = [mark_completed, mark_failed, refund_transaction]
+    actions = [mark_completed, mark_failed, refund_transaction, export_to_excel]
     date_hierarchy = 'created_at'
     list_per_page = 50
 

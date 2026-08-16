@@ -46,6 +46,12 @@
           </svg>
           Reports
         </a>
+        {% if wallet %}
+        <button type="button" id="openStatementModal" class="col-span-2 flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+          Download Account Statement
+        </button>
+        {% endif %}
       </div>
     </div>
   </section>
@@ -144,4 +150,71 @@
     </div>
   </section>
 </div>
+
+{% if wallet %}
+<div id="statementModal" class="fixed inset-0 z-[70] hidden items-end justify-center bg-slate-950/50 p-4 sm:items-center" role="dialog" aria-modal="true" aria-labelledby="statementModalTitle">
+  <div class="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <h2 id="statementModalTitle" class="text-xl font-extrabold text-slate-900">Download Account Statement</h2>
+        <p class="mt-2 text-sm leading-6 text-slate-500">With account statement you can see a summary of all transactions made through this account during the selected period.</p>
+      </div>
+      <button type="button" id="closeStatementModal" class="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" aria-label="Close">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <form id="statementForm" class="mt-6">
+      <fieldset class="space-y-2">
+        <legend class="sr-only">Statement period</legend>
+        <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50">
+          <input type="radio" name="period" value="this_month" class="h-4 w-4 border-slate-300 text-blue-600 focus:ring-blue-500">
+          <span class="text-sm font-semibold text-slate-700">This month</span>
+        </label>
+        <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50">
+          <input type="radio" name="period" value="1_month" class="h-4 w-4 border-slate-300 text-blue-600 focus:ring-blue-500">
+          <span class="text-sm font-semibold text-slate-700">Last 1 month</span>
+        </label>
+        <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50">
+          <input type="radio" name="period" value="3_months" class="h-4 w-4 border-slate-300 text-blue-600 focus:ring-blue-500">
+          <span class="text-sm font-semibold text-slate-700">Last 3 months</span>
+        </label>
+        <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50">
+          <input type="radio" name="period" value="6_months" class="h-4 w-4 border-slate-300 text-blue-600 focus:ring-blue-500">
+          <span class="text-sm font-semibold text-slate-700">Last 6 months</span>
+        </label>
+      </fieldset>
+      <div class="mt-6 flex items-center justify-end gap-3 border-t border-slate-100 pt-5">
+        <button type="button" id="cancelStatementModal" class="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-100">CANCEL</button>
+        <button type="submit" id="downloadStatementButton" disabled class="inline-flex min-w-36 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300">
+          <span>DOWNLOAD PDF</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+  (() => {
+    const modal = document.getElementById('statementModal');
+    const open = document.getElementById('openStatementModal');
+    const show = () => { modal.classList.remove('hidden'); modal.classList.add('flex'); };
+    const close = () => { modal.classList.add('hidden'); modal.classList.remove('flex'); };
+    const form = document.getElementById('statementForm');
+    const submit = document.getElementById('downloadStatementButton');
+    open.addEventListener('click', show);
+    document.getElementById('closeStatementModal').addEventListener('click', close);
+    document.getElementById('cancelStatementModal').addEventListener('click', close);
+    modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+    document.addEventListener('keydown', (event) => { if (event.key === 'Escape') close(); });
+    form.querySelectorAll('input[name="period"]').forEach((input) => input.addEventListener('change', () => { submit.disabled = false; }));
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const period = form.querySelector('input[name="period"]:checked').value;
+      submit.disabled = true;
+      submit.innerHTML = '<svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg><span>GENERATING...</span>';
+      window.location.assign('{% url "account_statement_download" %}?period=' + encodeURIComponent(period) + '&wallet_id={{ wallet.id }}');
+      window.setTimeout(() => { submit.disabled = false; submit.innerHTML = '<span>DOWNLOAD PDF</span>'; }, 1800);
+    });
+  })();
+</script>
+{% endif %}
 {% endblock %}
