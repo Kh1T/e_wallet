@@ -1,0 +1,462 @@
+{% extends 'wallet/base.html' %}
+{% block title %}Send Money — NexusPay{% endblock %}
+{% block page_title %}Send Money{% endblock %}
+
+{% block content %}
+<div class="max-w-xl mx-auto">
+  {% if not kyc_verified %}
+  <!-- KYC Required Warning -->
+  <div class="bg-amber-50 border border-amber-200 rounded-2xl p-6 mb-6">
+    <div class="flex items-start gap-4">
+      <div class="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center flex-shrink-0">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+        </svg>
+      </div>
+      <div>
+        <h3 class="text-lg font-bold text-amber-800 mb-1">KYC Verification Required</h3>
+        <p class="text-amber-700 text-sm mb-3">You need to complete KYC verification before you can send money.</p>
+        <a href="{% url 'kyc' %}" class="inline-flex items-center rounded-xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 transition">Complete KYC Verification</a>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+    <h2 class="text-lg font-bold text-slate-800 mb-4">Transfer Details</h2>
+
+    <div id="wallet-balance-display" class="bg-slate-50 rounded-xl p-4 mb-6 border border-slate-200">
+      <p class="text-sm text-slate-500">Available Balance</p>
+      <p class="text-2xl font-bold text-slate-800" id="display-balance">{{ wallet.currency|default:'KHR' }} {{ wallet.balance|default:'0' }}</p>
+      <p class="text-xs text-slate-400 font-mono mt-1" id="display-wallet-number">{{ wallet.wallet_number|default:'' }}</p>
+    </div>
+
+    {% if kyc_verified and has_pin %}
+    <!-- QR Scan Button -->
+    <div class="mb-6">
+      <button type="button" onclick="openQrScanner()" class="w-full py-4 px-4 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-xl font-semibold transition flex items-center justify-center gap-3 shadow-lg shadow-blue-500/25 active:scale-[0.98] touch-manipulation">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
+          <rect x="7" y="7" width="10" height="10" rx="2"/>
+        </svg>
+        <span>Scan QR Code</span>
+      </button>
+      <p class="text-xs text-slate-400 text-center mt-2">Camera or upload • Works with Receive QR</p>
+    </div>
+    {% endif %}
+
+    <form method="post" id="send-form" class="space-y-5" {% if not kyc_verified or not has_pin %}onsubmit="return false;"{% endif %}>
+      {% csrf_token %}
+
+      <!-- QR Scan Result Display -->
+      <div id="qr-scan-result" class="hidden bg-blue-50 border border-blue-200 rounded-xl p-4">
+        <div class="flex items-center gap-2 mb-2">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+          </svg>
+          <p class="text-sm text-blue-800 font-medium">QR Code Scanned!</p>
+        </div>
+        <div class="bg-white rounded-lg p-3 border border-blue-100">
+          <p class="text-xs text-slate-500">Recipient Wallet</p>
+          <p class="text-sm font-mono font-semibold text-slate-800" id="scanned-wallet-number"></p>
+        </div>
+        <button type="button" onclick="clearQrScan()" class="mt-2 text-xs text-blue-600 hover:text-blue-800">Clear and enter manually</button>
+      </div>
+
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-2">From Wallet</label>
+        <select name="sender_wallet" required
+                class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
+                {% if not kyc_verified or not has_pin %}disabled{% endif %}>
+          {% for w in wallets %}
+          <option value="{{ w.id }}" data-balance="{{ w.balance }}" data-currency="{{ w.currency }}" data-number="{{ w.wallet_number }}" {% if form.sender_wallet.value == w.id|stringformat:'s' %}selected{% endif %}>
+            {{ w.currency }} — {{ w.wallet_number }} (Balance: {{ w.balance }})
+          </option>
+          {% endfor %}
+        </select>
+        {% if form.sender_wallet.errors %}<p class="text-red-500 text-xs mt-1">{{ form.sender_wallet.errors.0 }}</p>{% endif %}
+      </div>
+
+      <div id="recipient-field">
+        <label class="block text-sm font-semibold text-slate-700 mb-2">Recipient Wallet Number</label>
+        <input type="text" name="recipient_wallet" id="recipient-wallet-input" value="{{ form.recipient_wallet.value|default:'' }}"
+               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
+               {% if not kyc_verified or not has_pin %}disabled{% endif %}>
+        {% if form.recipient_wallet.errors %}<p class="text-red-500 text-xs mt-1">{{ form.recipient_wallet.errors.0 }}</p>{% endif %}
+      </div>
+
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-2">Amount (<span id="amount-currency">{{ wallet.currency|default:'KHR' }}</span>)</label>
+        <input type="number" name="amount" id="amount-input" value="{{ form.amount.value|default:'' }}" step="0.01" min="0.01"
+               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
+               {% if not kyc_verified or not has_pin %}disabled{% endif %}>
+        {% if form.amount.errors %}<p class="text-red-500 text-xs mt-1">{{ form.amount.errors.0 }}</p>{% endif %}
+      </div>
+
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-2">Description (Optional)</label>
+        <input type="text" name="description" id="description-input" value="{{ form.description.value|default:'' }}"
+               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
+               {% if not kyc_verified or not has_pin %}disabled{% endif %}>
+      </div>
+
+      <!-- Modal Backdrop Overlay -->
+      <div id="pin-modal" class="fixed inset-0 z-50 flex items-center justify-center hidden bg-slate-900/60 backdrop-blur-sm transition-all duration-300">
+        <!-- Modal Card -->
+        <div class="bg-white rounded-3xl p-6 shadow-xl border border-slate-100 max-w-md w-full mx-4 transition-all scale-95 opacity-0 duration-300" id="modal-card">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-bold text-slate-800">Security Verification</h3>
+            <button type="button" onclick="closePinModal()" class="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+          
+          <div class="space-y-4">
+            <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+              <p class="text-xs text-slate-400">Total Transfer Amount</p>
+              <p class="text-xl font-bold text-slate-800" id="modal-amount-display">{{ wallet.currency|default:'KHR' }} 0.00</p>
+              <p class="text-xs text-slate-500 mt-1" id="modal-recipient-display">To Wallet: -</p>
+              <p class="text-xs text-slate-500 mt-1" id="modal-from-display">From Wallet: -</p>
+            </div>
+
+            <!-- PIN Input -->
+            <div>
+              <label class="block text-sm font-semibold text-slate-700 mb-2">Transaction PIN</label>
+              <input type="password" name="pin" id="pin-input" value="{{ form.pin.value|default:'' }}" placeholder="Enter 4-6 digit PIN"
+                     class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500"
+                     {% if not kyc_verified or not has_pin %}disabled{% endif %}>
+              {% if form.pin.errors %}<p class="text-red-500 text-xs mt-1">{{ form.pin.errors.0 }}</p>{% endif %}
+            </div>
+
+            <!-- OTP Input (Conditional) -->
+            {% if otp_challenge %}
+            <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 mt-2">
+              <label class="block text-sm font-semibold text-blue-900 mb-2">OTP Verification Code</label>
+              <input type="text" name="otp_code" value="{{ form.otp_code.value|default:'' }}" placeholder="Enter 6-digit OTP"
+                     class="w-full rounded-xl border border-blue-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500"
+                     {% if otp_challenge %}required{% endif %}>
+              {% if form.otp_code.errors %}<p class="text-red-500 text-xs mt-1">{{ form.otp_code.errors.0 }}</p>{% endif %}
+              <p class="text-xs text-blue-700 mt-2">Please enter the 6-digit code sent to your notifications.</p>
+            </div>
+            {% endif %}
+          </div>
+
+          <div class="flex gap-3 mt-6">
+            <button type="button" onclick="closePinModal()" class="flex-1 py-3 text-sm font-semibold text-slate-500 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 transition">Cancel</button>
+            <button type="submit" class="flex-1 py-3 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-lg shadow-blue-500/20 transition">Confirm & Send</button>
+          </div>
+        </div>
+      </div>
+
+      <button type="{% if kyc_verified and has_pin %}button{% else %}submit{% endif %}"
+              {% if kyc_verified and has_pin %}onclick="openPinModal()"{% endif %}
+              class="w-full inline-flex items-center justify-center rounded-xl {% if kyc_verified and has_pin %}bg-blue-600 hover:bg-blue-700{% else %}bg-slate-400 cursor-not-allowed{% endif %} px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/20 transition"
+              {% if not kyc_verified or not has_pin %}disabled{% endif %}>
+        {% if not kyc_verified %}
+          Complete KYC to Send
+        {% elif not has_pin %}
+          Setup PIN to Send
+        {% elif otp_challenge %}
+          Verify and Confirm Transfer
+        {% else %}
+          Send Money
+        {% endif %}
+      </button>
+    </form>
+  </div>
+
+  <div class="mt-6 text-center">
+    <a href="{% url 'dashboard' %}" class="text-sm text-slate-500 hover:text-slate-700 transition">← Back to Dashboard</a>
+  </div>
+</div>
+
+<!-- QR Scanner Modal -->
+<div id="qr-scanner-modal" class="fixed inset-0 z-[60] hidden flex-col items-center justify-center bg-slate-950/90 p-4 backdrop-blur-sm">
+  <div class="relative w-full max-w-sm bg-white rounded-2xl p-4 sm:p-6 shadow-2xl">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-lg font-bold text-slate-800">Scan QR Code</h3>
+      <button type="button" onclick="closeQrScanner()" class="p-2 text-slate-400 hover:text-slate-600 rounded-xl">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 6 6 18M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+    
+    <!-- Camera View -->
+    <div class="bg-slate-900 rounded-xl overflow-hidden mb-3 relative">
+      <div id="qr-reader" class="w-full aspect-square"></div>
+      <!-- Scanning Frame Overlay -->
+      <div class="absolute inset-0 pointer-events-none">
+        <div class="absolute inset-[10%] border-2 border-white/50 rounded-lg">
+          <div class="absolute top-0 left-0 w-6 h-6 border-t-4 border-l-4 border-blue-500 -mt-1 -ml-1"></div>
+          <div class="absolute top-0 right-0 w-6 h-6 border-t-4 border-r-4 border-blue-500 -mt-1 -mr-1"></div>
+          <div class="absolute bottom-0 left-0 w-6 h-6 border-b-4 border-l-4 border-blue-500 -mb-1 -ml-1"></div>
+          <div class="absolute bottom-0 right-0 w-6 h-6 border-b-4 border-r-4 border-blue-500 -mb-1 -mr-1"></div>
+        </div>
+      </div>
+    </div>
+    
+    <p class="text-sm text-slate-500 text-center mb-3" id="scan-status">Initializing camera...</p>
+    
+    <!-- Mobile-friendly buttons -->
+    <div class="space-y-2">
+      <!-- Upload File Button (fallback) -->
+      <label class="w-full flex items-center justify-center gap-2 px-4 py-3 bg-slate-100 text-slate-700 rounded-xl cursor-pointer hover:bg-slate-200 transition active:scale-95">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        Upload QR Image
+        <input type="file" id="qr-file-input" accept="image/*" class="hidden" onchange="handleQrFile(this)">
+      </label>
+    </div>
+  </div>
+</div>
+
+<script>
+  const walletSelect = document.querySelector('select[name="sender_wallet"]');
+  const displayBalance = document.getElementById('display-balance');
+  const displayNumber = document.getElementById('display-wallet-number');
+  const amountCurrency = document.getElementById('amount-currency');
+  let qrScanner = null;
+
+  function updateWalletDisplay() {
+      const option = walletSelect.options[walletSelect.selectedIndex];
+      if (!option) return;
+      const currency = option.dataset.currency;
+      const balance = option.dataset.balance;
+      const number = option.dataset.number;
+      displayBalance.textContent = `${currency} ${parseFloat(balance).toFixed(2)}`;
+      displayNumber.textContent = number;
+      amountCurrency.textContent = currency;
+  }
+
+  walletSelect.addEventListener('change', updateWalletDisplay);
+  updateWalletDisplay();
+
+  function openPinModal() {
+      const form = document.getElementById('send-form');
+      if (!form.reportValidity()) return;
+      
+      const recipient = document.getElementById('recipient-wallet-input').value;
+      const amount = document.getElementById('amount-input').value;
+      const option = walletSelect.options[walletSelect.selectedIndex];
+      const currency = option ? option.dataset.currency : "{{ wallet.currency|default:'KHR' }}";
+      const number = option ? option.dataset.number : "";
+      
+      document.getElementById('modal-amount-display').innerText = `${currency} ${parseFloat(amount || 0).toFixed(2)}`;
+      document.getElementById('modal-recipient-display').innerText = `To Wallet: ${recipient}`;
+      document.getElementById('modal-from-display').innerText = `From Wallet: ${number}`;
+
+      const modal = document.getElementById('pin-modal');
+      const card = document.getElementById('modal-card');
+      modal.classList.remove('hidden');
+      setTimeout(() => {
+          card.classList.remove('scale-95', 'opacity-0');
+          card.classList.add('scale-100', 'opacity-100');
+          document.getElementById('pin-input').focus();
+      }, 50);
+  }
+
+  function closePinModal() {
+      const modal = document.getElementById('pin-modal');
+      const card = document.getElementById('modal-card');
+      card.classList.remove('scale-100', 'opacity-100');
+      card.classList.add('scale-95', 'opacity-0');
+      setTimeout(() => modal.classList.add('hidden'), 300);
+  }
+
+  // QR Scanner Functions
+  function openQrScanner() {
+    const modal = document.getElementById('qr-scanner-modal');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    document.body.style.overflow = 'hidden';
+    initQrScanner();
+  }
+
+  function closeQrScanner() {
+    const modal = document.getElementById('qr-scanner-modal');
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+    document.body.style.overflow = '';
+    if (qrScanner) {
+      qrScanner.stop().catch(() => {});
+      qrScanner = null;
+    }
+  }
+
+  function initQrScanner() {
+    const qrReader = document.getElementById('qr-reader');
+    const statusEl = document.getElementById('scan-status');
+    
+    if (!qrReader) return;
+    
+    // Always try to start camera immediately
+    statusEl.textContent = 'Starting camera...';
+    
+    // Load html5-qrcode if not already loaded
+    if (typeof Html5Qrcode === 'undefined') {
+      statusEl.textContent = 'Loading scanner...';
+      const script = document.createElement('script');
+      script.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+      script.onload = () => startQrScanner();
+      script.onerror = () => {
+        statusEl.textContent = 'Failed to load scanner. Please upload an image.';
+        statusEl.classList.add('text-red-500');
+      };
+      document.head.appendChild(script);
+    } else {
+      startQrScanner();
+    }
+  }
+
+  function startQrScanner() {
+    const qrReader = document.getElementById('qr-reader');
+    const statusEl = document.getElementById('scan-status');
+    
+    if (qrScanner) {
+      qrScanner.stop().catch(() => {});
+    }
+    
+    qrScanner = new Html5Qrcode('qr-reader');
+    
+    // Try to use back camera first
+    const cameraConfig = { facingMode: { exact: 'environment' } };
+    
+    qrScanner.start(
+      cameraConfig,
+      { fps: 10, qrbox: { width: 200, height: 200 } },
+      (decodedText) => {
+        handleQrDetected(decodedText);
+      },
+      () => {}
+    ).then(() => {
+      statusEl.textContent = 'Point camera at QR code';
+      statusEl.classList.remove('text-amber-600', 'text-red-500');
+      statusEl.classList.add('text-green-600');
+    }).catch((err) => {
+      console.error('Camera error:', err);
+      // Try without exact constraint (for iOS Safari)
+      qrScanner.stop().catch(() => {});
+      qrScanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 200, height: 200 } },
+        (decodedText) => handleQrDetected(decodedText),
+        () => {}
+      ).then(() => {
+        statusEl.textContent = 'Point camera at QR code';
+        statusEl.classList.add('text-green-600');
+      }).catch((err2) => {
+        console.error('Fallback camera error:', err2);
+        statusEl.textContent = 'Camera access denied. Please upload an image.';
+        statusEl.classList.add('text-red-500');
+      });
+    });
+  }
+
+  function handleQrDetected(qrData) {
+    try {
+      const data = JSON.parse(qrData);
+      let walletNumber = null;
+      let amount = null;
+      let currency = 'KHR';
+      let description = '';
+      
+      // Handle NEXUSPAY_RECEIVE format (from receive popup)
+      if (data.type === 'NEXUSPAY_RECEIVE') {
+        walletNumber = data.wallet;
+        amount = data.amount;
+        currency = data.currency || 'KHR';
+        description = `Payment to ${data.receiver || ''}`;
+      }
+      // Handle wallet_transfer format
+      else if (data.type === 'wallet_transfer') {
+        walletNumber = data.wallet_number;
+        amount = data.amount;
+        currency = data.currency || 'KHR';
+        description = data.description || '';
+      }
+      
+      if (walletNumber) {
+        // Fill in the form
+        document.getElementById('recipient-wallet-input').value = walletNumber;
+        document.getElementById('scanned-wallet-number').textContent = walletNumber;
+        
+        if (amount && !document.getElementById('amount-input').value) {
+          document.getElementById('amount-input').value = amount;
+        }
+        if (description && !document.getElementById('description-input').value) {
+          document.getElementById('description-input').value = description;
+        }
+        
+        // Show scan result, hide manual input
+        document.getElementById('qr-scan-result').classList.remove('hidden');
+        document.getElementById('recipient-field').classList.add('hidden');
+        
+        // Close scanner
+        closeQrScanner();
+      }
+    } catch (e) {
+      // Try plain wallet number
+      const plainWallet = qrData.trim();
+      if (plainWallet.startsWith('W') && plainWallet.length >= 8) {
+        document.getElementById('recipient-wallet-input').value = plainWallet;
+        document.getElementById('scanned-wallet-number').textContent = plainWallet;
+        document.getElementById('qr-scan-result').classList.remove('hidden');
+        document.getElementById('recipient-field').classList.add('hidden');
+        closeQrScanner();
+      }
+    }
+  }
+
+  function handleQrFile(input) {
+    if (!input.files || !input.files[0]) return;
+    
+    const file = input.files[0];
+    const statusEl = document.getElementById('scan-status');
+    statusEl.textContent = 'Processing image...';
+    
+    // Load html5-qrcode if needed
+    if (typeof Html5Qrcode === 'undefined') {
+      const script = document.createElement('script');
+      script.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+      script.onload = () => processQrFile(file);
+      document.head.appendChild(script);
+    } else {
+      processQrFile(file);
+    }
+  }
+
+  function processQrFile(file) {
+    const statusEl = document.getElementById('scan-status');
+    const tempScanner = new Html5Qrcode('qr-reader');
+    
+    tempScanner.scanFile(file, true)
+      .then((decodedText) => {
+        handleQrDetected(decodedText);
+        tempScanner.clear();
+      })
+      .catch((err) => {
+        console.error('File scan error:', err);
+        statusEl.textContent = 'Could not read QR code. Please try again.';
+        statusEl.classList.add('text-red-500');
+        tempScanner.clear();
+      });
+  }
+
+  function clearQrScan() {
+    document.getElementById('qr-scan-result').classList.add('hidden');
+    document.getElementById('recipient-field').classList.remove('hidden');
+    document.getElementById('recipient-wallet-input').value = '';
+  }
+
+  // Auto-open modal if there are errors
+  {% if form.pin.errors or form.otp_code.errors or otp_challenge %}
+  document.addEventListener("DOMContentLoaded", () => {
+      openPinModal();
+  });
+  {% endif %}
+</script>
+{% endblock %}

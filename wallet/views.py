@@ -1,9 +1,72 @@
-from rest_framework import viewsets
-from django.shortcuts import render
+from rest_framework import viewsets, generics, status
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenRefreshView
+from django.conf import settings
+from django.contrib.auth import authenticate, login as auth_login, logout as auth_logout
+from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse
+from django.contrib import messages
+from django.contrib.auth.mixins import LoginRequiredMixin
+from django.core.exceptions import PermissionDenied
+from django.http import Http404
+from django.views import View
+from django.db import transaction as db_transaction
+from django.db.models import Sum, Q
+from django.utils import timezone
+from decimal import Decimal
+import os
+import uuid
+import random
+
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
+
+from .cloudinary_utils import (
+    upload_kyc_id_document,
+    upload_kyc_selfie,
+    is_cloudinary_url,
+)
+from .email_utils import (
+    generate_reset_token,
+    send_password_reset_email,
+    send_password_reset_confirmation,
+)
+
+from .qr_utils import (
+    generate_wallet_qr_data,
+    parse_wallet_qr_data,
+    generate_qr_image,
+)
+
+
+def _set_jwt_cookies(response, access_token, refresh_token=None):
+    response.set_cookie(
+        'access_token',
+        access_token,
+        httponly=True,
+        secure=not settings.DEBUG,
+        samesite='Lax',
+        max_age=60 * 60,
+    )
+    if refresh_token:
+        response.set_cookie(
+            'refresh_token',
+            refresh_token,
+            httponly=True,
+            secure=not settings.DEBUG,
+            samesite='Lax',
+            max_age=24 * 60 * 60,
+        )
+    return response
+
+from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from .models import (
     User, Wallet, Merchant, Biller, Transaction, Notification, IdentityVerification,
     Security, TransactionLimit, AuditLog, Report, Analytics, Backup, MerchantQR,
-    BillPayment, Withdrawal, Topup, Transfer, FraudDetection
+    BillPayment, Withdrawal, Topup, Transfer, FraudDetection, BakongPayment
 )
 from .serializers import (
     UserSerializer, WalletSerializer, MerchantSerializer, BillerSerializer,
@@ -11,11 +74,1761 @@ from .serializers import (
     SecuritySerializer, TransactionLimitSerializer, AuditLogSerializer,
     ReportSerializer, AnalyticsSerializer, BackupSerializer, MerchantQRSerializer,
     BillPaymentSerializer, WithdrawalSerializer, TopupSerializer, TransferSerializer,
-    FraudDetectionSerializer
+    FraudDetectionSerializer,
+    RegisterSerializer, LoginSerializer, ChangePasswordSerializer, UserProfileSerializer,
+    generate_wallet_number,
 )
+from .forms import (
+    LoginForm, RegisterForm, SendMoneyForm, TopupForm,
+    ProfileUpdateForm, ChangePasswordForm, KYCVerificationForm,
+    WalletManagementForm, UpdateWalletForm, BillPaymentForm,
+    ChangePinForm, ForgotPasswordForm, ResetPasswordForm,
+)
+from .services import NotificationService
+from .services.statement_pdf import generate_statement_pdf
+from .services.statements import build_statement, get_statement_period
 
+
+# ─────────────────────────────────────────
+#  LEGACY INDEX (redirects to dashboard)
+# ─────────────────────────────────────────
 def index(request):
-    return render(request, 'wallet/index.html')
+    if request.user.is_authenticated:
+        return redirect('dashboard')
+    return redirect('login')
+
+
+# ═════════════════════════════════════════
+#  GUI / SESSION-BASED VIEWS
+# ═════════════════════════════════════════
+
+class LoginPageView(View):
+    """GET/POST /login/ — Session-based login page."""
+    template_name = 'wallet/login.html'
+
+    def get(self, request):
+        if request.user.is_authenticated:
+            return redirect('dashboard')
+        return render(request, self.template_name, {'form': LoginForm()})
+
+    def post(self, request):
+        form = LoginForm(request.POST)
+        if form.is_valid():
+            user = authenticate(
+                request,
+                username=form.cleaned_data['email'],
+                password=form.cleaned_data['password'],
+            )
+            if user:
+                auth_login(request, user)
+                # Get IP address if available
+                ip_address = request.META.get('REMOTE_ADDR')
+                NotificationService.notify_login(user=user, ip_address=ip_address)
+                return redirect('dashboard')
+            form.add_error(None, 'Invalid email or password.')
+        return render(request, self.template_name, {'form': form})
+
+
+class RegisterPageView(View):
+    """GET/POST /register/ — Session-based registration page."""
+    template_name = 'wallet/register.html'
+
+    def get(self, request):
+        if request.user.is_authenticated:
+            return redirect('dashboard')
+        return render(request, self.template_name, {'form': RegisterForm()})
+
+    def post(self, request):
+        form = RegisterForm(request.POST)
+        if form.is_valid():
+            d = form.cleaned_data
+            if User.objects.filter(email=d['email']).exists():
+                form.add_error('email', 'An account with this email already exists.')
+            elif User.objects.filter(phone=d['phone']).exists():
+                form.add_error('phone', 'This phone number is already registered.')
+            else:
+                user = User(
+                    username=d['email'],
+                    email=d['email'],
+                    full_name=d['full_name'],
+                    phone=d['phone'],
+                )
+                user.set_password(d['password'])
+                user.save()
+                auth_login(request, user)
+                messages.success(request, f'Welcome, {user.full_name}! Please create your new E-wallet to continue.')
+                return redirect('create_wallet')
+        return render(request, self.template_name, {'form': form})
+
+
+class LogoutPageView(View):
+    """POST /logout/ — Logs out and redirects to login."""
+    def post(self, request):
+        auth_logout(request)
+        return redirect('login')
+
+
+class ForgotPasswordView(View):
+    """GET/POST /forgot-password/ — Request password reset via email."""
+    template_name = 'wallet/forgot_password.html'
+
+    def get(self, request):
+        if request.user.is_authenticated:
+            return redirect('dashboard')
+        return render(request, self.template_name, {'form': ForgotPasswordForm()})
+
+    def post(self, request):
+        form = ForgotPasswordForm(request.POST)
+        if form.is_valid():
+            email = form.cleaned_data['email']
+            try:
+                user = User.objects.get(email=email)
+                # Generate reset token
+                token = generate_reset_token()
+                user.password_reset_token = token
+                user.password_reset_sent_at = timezone.now()
+                user.save()
+
+                # Build reset URL
+                reset_url = request.build_absolute_uri(
+                    reverse('reset-password') + f'?token={token}'
+                )
+
+                # Send email via Resend
+                result = send_password_reset_email(user, reset_url)
+
+                if result['success']:
+                    messages.success(request, 'Password reset link has been sent to your email.')
+                    return redirect('login')
+                else:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Failed to send reset email: {result.get('error', 'Unknown error')}")
+                    messages.error(request, f"Failed to send reset email: {result.get('error', 'Please try again later.')}")
+            except User.DoesNotExist:
+                # Don't reveal if email exists
+                messages.success(request, 'Password reset link has been sent to your email.')
+                return redirect('login')
+
+        return render(request, self.template_name, {'form': form})
+
+
+class ResetPasswordView(View):
+    """GET/POST /reset-password/ — Reset password using token."""
+    template_name = 'wallet/reset_password.html'
+
+    def get(self, request):
+        if request.user.is_authenticated:
+            return redirect('dashboard')
+
+        token = request.GET.get('token')
+        if not token:
+            messages.error(request, 'Invalid reset link.')
+            return redirect('login')
+
+        # Validate token
+        try:
+            user = User.objects.get(password_reset_token=token)
+            # Check if token is expired (1 hour)
+            if user.password_reset_sent_at:
+                time_diff = timezone.now() - user.password_reset_sent_at
+                if time_diff.total_seconds() > 3600:
+                    messages.error(request, 'Reset link has expired. Please request a new one.')
+                    return redirect('forgot-password')
+        except User.DoesNotExist:
+            messages.error(request, 'Invalid reset link.')
+            return redirect('login')
+
+        return render(request, self.template_name, {'form': ResetPasswordForm(), 'token': token})
+
+    def post(self, request):
+        token = request.POST.get('token')
+        if not token:
+            messages.error(request, 'Invalid reset link.')
+            return redirect('login')
+
+        form = ResetPasswordForm(request.POST)
+        if form.is_valid():
+            try:
+                user = User.objects.get(password_reset_token=token)
+                # Check if token is expired
+                if user.password_reset_sent_at:
+                    time_diff = timezone.now() - user.password_reset_sent_at
+                    if time_diff.total_seconds() > 3600:
+                        messages.error(request, 'Reset link has expired. Please request a new one.')
+                        return redirect('forgot-password')
+
+                # Set new password
+                user.set_password(form.cleaned_data['new_password'])
+                user.password_reset_token = None
+                user.password_reset_sent_at = None
+                user.save()
+
+                # Send confirmation email
+                send_password_reset_confirmation(user)
+
+                messages.success(request, 'Password has been reset successfully. Please log in.')
+                return redirect('login')
+
+            except User.DoesNotExist:
+                messages.error(request, 'Invalid reset link.')
+                return redirect('login')
+
+        return render(request, self.template_name, {'form': form, 'token': token})
+
+
+class DashboardView(LoginRequiredMixin, View):
+    """GET / — Main dashboard."""
+    login_url = '/login/'
+
+    def get(self, request):
+        wallet = Wallet.objects.filter(user=request.user).first()
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        recent_transactions = []
+        received_transfers  = []
+        total_income        = Decimal('0')
+        total_expense       = Decimal('0')
+        unread_count        = Notification.objects.filter(user=request.user, is_read=False).count()
+
+        if wallet:
+            now         = timezone.now()
+            month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+            recent_transactions = (
+                Transaction.objects
+                .filter(wallet=wallet)
+                .select_related('billpayment')
+                .order_by('-created_at')[:6]
+            )
+            received_transfers = (
+                Transfer.objects
+                .filter(receiver_wallet=wallet)
+                .select_related('transaction', 'sender_wallet__user')
+                .order_by('-created_at')[:6]
+            )
+            # Calculate income: received transfers + topups
+            total_income = (
+                Transfer.objects
+                .filter(receiver_wallet=wallet, created_at__gte=month_start)
+                .aggregate(t=Sum('transaction__amount'))['t'] or Decimal('0')
+            ) + (
+                Transaction.objects
+                .filter(wallet=wallet, transaction_type='topup', created_at__gte=month_start)
+                .aggregate(t=Sum('amount'))['t'] or Decimal('0')
+            )
+            
+            # Calculate expense: transfers sent + bill payments
+            total_expense = (
+                Transaction.objects
+                .filter(wallet=wallet, transaction_type='transfer', created_at__gte=month_start)
+                .aggregate(t=Sum('amount'))['t'] or Decimal('0')
+            ) + (
+                Transaction.objects
+                .filter(wallet=wallet, transaction_type='bill_payment', created_at__gte=month_start)
+                .aggregate(t=Sum('amount'))['t'] or Decimal('0')
+            )
+
+        ctx = {
+            'wallet':               wallet,
+            'verification':         verification,
+            'recent_transactions':  recent_transactions,
+            'received_transfers':   received_transfers,
+            'total_income':         total_income,
+            'total_expense':        total_expense,
+            'unread_count':         unread_count,
+            'topup_success_speech': request.session.pop('topup_success_speech', ''),
+            'active_page':          'dashboard',
+        }
+        return render(request, 'wallet/dashboard.html', ctx)
+
+
+class AccountsView(LoginRequiredMixin, View):
+    """GET /accounts/ — View all user accounts/wallets with balances."""
+    login_url = '/login/'
+    template_name = 'wallet/accounts.html'
+
+    def get(self, request):
+        wallets = Wallet.objects.filter(user=request.user).order_by('created_at')
+        total_balance = wallets.aggregate(total=Sum('balance'))['total'] or Decimal('0')
+
+        ctx = {
+            'wallets': wallets,
+            'total_balance': total_balance,
+            'active_page': 'accounts',
+        }
+        return render(request, self.template_name, ctx)
+
+
+class TransactionListView(LoginRequiredMixin, View):
+    """GET /transactions/ — Full transaction history."""
+    login_url = '/login/'
+
+    def get(self, request):
+        wallet = Wallet.objects.filter(user=request.user).first()
+        transactions       = []
+        received_transfers = []
+
+        if wallet:
+            transactions = (
+                Transaction.objects
+                .filter(wallet=wallet)
+                .select_related('billpayment')
+                .order_by('-created_at')
+            )
+            received_transfers = (
+                Transfer.objects
+                .filter(receiver_wallet=wallet)
+                .select_related('transaction', 'sender_wallet__user')
+                .order_by('-created_at')
+            )
+
+        ctx = {
+            'wallet':               wallet,
+            'transactions':         transactions,
+            'received_transfers':   received_transfers,
+            'active_page':          'transactions',
+        }
+        return render(request, 'wallet/transactions.html', ctx)
+
+
+class AccountStatementDownloadView(LoginRequiredMixin, View):
+    """Generate a PDF statement for an authenticated user's own wallet."""
+    login_url = '/login/'
+
+    def get(self, request):
+        period = request.GET.get('period')
+        try:
+            start, end = get_statement_period(period)
+        except ValueError:
+            return HttpResponseBadRequest('Invalid statement period.')
+
+        wallet_id = request.GET.get('wallet_id')
+        wallets = Wallet.objects.filter(user=request.user)
+        if wallet_id:
+            if not wallet_id.isdigit():
+                raise Http404('Wallet not found.')
+            wallet = get_object_or_404(wallets, pk=wallet_id)
+        else:
+            wallet = get_object_or_404(wallets.order_by('created_at'))
+
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        statement = build_statement(wallet, start, end)
+        pdf = generate_statement_pdf(wallet, request.user, verification, statement)
+        filename = f"statement_{start:%Y%m%d}_{end:%Y%m%d}.pdf"
+        response = HttpResponse(pdf, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
+
+class CreateWalletView(LoginRequiredMixin, View):
+    """GET/POST /create-wallet/ — Create a wallet for the authenticated user."""
+    login_url = '/login/'
+    template_name = 'wallet/create_wallet.html'
+
+    def get(self, request):
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        is_kyc_verified = bool(verification and verification.verification_status == 'verified')
+
+        existing_wallets = Wallet.objects.filter(user=request.user).order_by('created_at')
+        wallet = existing_wallets.first()
+        if not is_kyc_verified:
+            messages.warning(request, 'KYC verification is required before creating a wallet. Please complete your KYC first.')
+            return redirect('kyc')
+
+        if existing_wallets.count() >= 5:
+            messages.info(request, 'Wallet creation limit reached. You can create up to 5 wallets.')
+            return render(request, self.template_name, {
+                'active_page': 'create_wallet',
+                'existing_wallets': existing_wallets,
+                'can_create_separate': False,
+            })
+        if wallet and existing_wallets.count() >= 1:
+            return render(request, self.template_name, {
+                'active_page': 'create_wallet',
+                'existing_wallets': existing_wallets,
+                'can_create_separate': True,
+            })
+        return render(request, self.template_name, {'active_page': 'create_wallet', 'existing_wallets': existing_wallets})
+
+    def post(self, request):
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        is_kyc_verified = bool(verification and verification.verification_status == 'verified')
+        if not is_kyc_verified:
+            messages.error(request, 'KYC verification is required before creating a wallet. Please complete your KYC first.')
+            return redirect('kyc')
+
+        wallet_type = request.POST.get('wallet_type', 'primary')
+        existing_wallets = Wallet.objects.filter(user=request.user).order_by('created_at')
+        if existing_wallets.count() >= 5:
+            messages.error(request, 'Wallet creation limit exceeded. You can create up to 5 wallets.')
+            return render(request, self.template_name, {
+                'active_page': 'create_wallet',
+                'existing_wallets': existing_wallets,
+                'can_create_separate': existing_wallets.count() == 1,
+            })
+
+        if existing_wallets.exists() and wallet_type != 'separate':
+            messages.info(request, 'You already have a wallet. Choose the separate option to create another one.')
+            return render(request, self.template_name, {
+                'active_page': 'create_wallet',
+                'existing_wallets': existing_wallets,
+                'can_create_separate': True,
+            })
+
+        wallet = Wallet.objects.create(
+            user=request.user,
+            wallet_number=generate_wallet_number(request.user),
+            currency='KHR',
+        )
+        NotificationService.notify_wallet_created(
+            user=request.user,
+            wallet_number=wallet.wallet_number,
+            currency=wallet.currency
+        )
+        messages.success(request, f'Wallet created successfully! Your wallet number is {wallet.wallet_number}.')
+        return redirect('dashboard')
+
+
+class WalletManagementView(LoginRequiredMixin, View):
+    """GET/POST /wallet-management/ — Manage wallet (view balance, freeze, close, etc.)."""
+    login_url = '/login/'
+    template_name = 'wallet/wallet_management.html'
+
+    def get(self, request):
+        wallets = Wallet.objects.filter(user=request.user).order_by('created_at')
+        if not wallets.exists():
+            messages.warning(request, 'You do not have a wallet. Please create one first.')
+            return redirect('create_wallet')
+
+        selected_wallet_id = request.GET.get('wallet_id')
+        wallet = wallets.filter(id=selected_wallet_id).first() if selected_wallet_id else wallets.first()
+        if not wallet:
+            wallet = wallets.first()
+
+        action = request.GET.get('action', 'select')
+        form = UpdateWalletForm(initial={'currency': wallet.currency}) if action == 'update_info' else WalletManagementForm()
+        ctx = {
+            'wallet': wallet,
+            'wallets': wallets,
+            'selected_wallet_id': wallet.id,
+            'action': action,
+            'form': form,
+            'active_page': 'wallet_management',
+        }
+        return render(request, self.template_name, ctx)
+
+    def post(self, request):
+        selected_wallet_id = request.POST.get('wallet_id') or request.GET.get('wallet_id')
+        wallets = Wallet.objects.filter(user=request.user).order_by('created_at')
+        wallet = wallets.filter(id=selected_wallet_id).first() if selected_wallet_id else wallets.first()
+        if not wallet:
+            wallet = wallets.first()
+        if not wallet:
+            messages.error(request, 'You do not have a wallet.')
+            return redirect('create_wallet')
+
+        action = request.POST.get('action')
+
+        if action == 'update_info':
+            form = UpdateWalletForm(request.POST or None, initial={'currency': wallet.currency})
+            if request.method == 'POST' and form.is_valid():
+                wallet.currency = form.cleaned_data['currency']
+                wallet.save()
+                messages.success(request, 'Wallet information updated successfully.')
+                return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
+            ctx = {
+                'wallet': wallet,
+                'wallets': wallets,
+                'selected_wallet_id': wallet.id,
+                'action': 'update_info',
+                'form': form,
+                'active_page': 'wallet_management',
+            }
+            return render(request, self.template_name, ctx)
+
+        elif action == 'freeze':
+            if wallet.status == 'frozen':
+                messages.info(request, 'Wallet is already frozen.')
+            else:
+                wallet.status = 'frozen'
+                wallet.save()
+                NotificationService.notify_wallet_frozen(
+                    user=request.user,
+                    wallet_number=wallet.wallet_number
+                )
+                messages.success(request, 'Wallet has been frozen successfully.')
+            return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
+
+        elif action == 'unfreeze':
+            if wallet.status == 'active':
+                messages.info(request, 'Wallet is already active.')
+            else:
+                wallet.status = 'active'
+                wallet.save()
+                NotificationService.notify_wallet_unfrozen(
+                    user=request.user,
+                    wallet_number=wallet.wallet_number
+                )
+                messages.success(request, 'Wallet has been unfrozen successfully.')
+            return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
+
+        elif action == 'close':
+            if wallet.balance != Decimal('0.00'):
+                messages.error(request, 'Wallet cannot be closed while it still has a balance. Please transfer or withdraw the balance first.')
+            else:
+                wallet.status = 'closed'
+                wallet.save()
+                NotificationService.notify_wallet_closed(
+                    user=request.user,
+                    wallet_number=wallet.wallet_number
+                )
+                messages.success(request, 'Wallet has been closed successfully.')
+            return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
+
+        elif action == 'reopen':
+            if wallet.status == 'closed':
+                wallet.status = 'active'
+                wallet.save()
+                messages.success(request, 'Wallet has been reopened successfully.')
+            elif wallet.status == 'active':
+                messages.info(request, 'Wallet is already active.')
+            else:
+                messages.info(request, f'Wallet is currently {wallet.status}.')
+            return redirect(f"{reverse('wallet_management')}?wallet_id={wallet.id}")
+
+
+        return redirect('wallet_management')
+
+
+class SendMoneyView(LoginRequiredMixin, View):
+    """GET/POST /send/ — Transfer money to another wallet by wallet number with PIN and OTP verification."""
+    login_url = '/login/'
+    template_name = 'wallet/send.html'
+
+    def get(self, request):
+        wallets = Wallet.objects.filter(user=request.user)
+        wallet = wallets.first()
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        kyc_verified = verification and verification.verification_status == 'verified'
+        security, _ = Security.objects.get_or_create(user=request.user)
+        has_pin = bool(security.pin_hash)
+
+        if not kyc_verified:
+            messages.warning(request, 'KYC verification is required to send money. Please complete your KYC verification.')
+        elif not has_pin:
+            messages.warning(request, 'You must set up a transaction PIN in your profile settings before sending money.')
+
+        return render(request, self.template_name, {
+            'form': SendMoneyForm(user=request.user),
+            'wallets': wallets,
+            'wallet': wallet,
+            'kyc_verified': kyc_verified,
+            'has_pin': has_pin,
+            'otp_required': security.otp_enabled,
+            'otp_challenge': False,
+            'active_page': 'send',
+        })
+
+    def post(self, request):
+        wallets = Wallet.objects.filter(user=request.user)
+        form = SendMoneyForm(request.POST, user=request.user)
+
+        # Check KYC verification status
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        kyc_verified = verification and verification.verification_status == 'verified'
+        security, _ = Security.objects.get_or_create(user=request.user)
+        has_pin = bool(security.pin_hash)
+
+        if not kyc_verified:
+            messages.error(request, 'KYC verification is required to send money. Please complete your KYC verification.')
+            return render(request, self.template_name, {
+                'form': form, 'wallets': wallets, 'wallet': wallets.first(),
+                'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+            })
+
+        if not has_pin:
+            messages.error(request, 'You must set up a transaction PIN in your profile settings before sending money.')
+            return redirect('profile')
+
+        if not wallets.exists():
+            messages.error(request, 'You do not have a wallet yet.')
+            return redirect('dashboard')
+
+        if form.is_valid():
+            wallet = form.cleaned_data['sender_wallet']
+            d = form.cleaned_data
+            
+            # 1. Verify PIN
+            from django.contrib.auth.hashers import check_password
+            if not check_password(d['pin'], security.pin_hash):
+                form.add_error('pin', 'Invalid transaction PIN.')
+                return render(request, self.template_name, {
+                    'form': form, 'wallets': wallets, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+                })
+
+            # 2. Verify OTP if enabled
+            if security.otp_enabled:
+                otp_code = d.get('otp_code')
+                if not otp_code:
+                    # Generate and send OTP
+                    import random
+                    otp = str(random.randint(100000, 999999))
+                    security.temp_otp = otp
+                    security.temp_otp_expiry = timezone.now() + timezone.timedelta(minutes=5)
+                    security.save()
+
+                    Notification.objects.create(
+                        user=request.user,
+                        title='Transfer OTP Code',
+                        message=f'Your OTP code for sending money is: {otp}',
+                    )
+                    messages.info(request, 'An OTP has been generated. Please check your notifications to verify.')
+                    
+                    return render(request, self.template_name, {
+                        'form': form,
+                        'wallets': wallets,
+                        'wallet': wallet,
+                        'kyc_verified': kyc_verified,
+                        'has_pin': has_pin,
+                        'otp_required': True,
+                        'otp_challenge': True,
+                        'active_page': 'send',
+                    })
+                
+                # If OTP code is submitted, verify it
+                if security.temp_otp != otp_code or security.temp_otp_expiry < timezone.now():
+                    form.add_error('otp_code', 'Invalid or expired OTP code.')
+                    return render(request, self.template_name, {
+                        'form': form,
+                        'wallets': wallets,
+                        'wallet': wallet,
+                        'kyc_verified': kyc_verified,
+                        'has_pin': has_pin,
+                        'otp_required': True,
+                        'otp_challenge': True,
+                        'active_page': 'send',
+                    })
+
+            # Clear temporary OTP once validation succeeds
+            if security.otp_enabled:
+                security.temp_otp = None
+                security.temp_otp_expiry = None
+                security.save()
+
+            try:
+                recipient = Wallet.objects.get(wallet_number=d['recipient_wallet'])
+            except Wallet.DoesNotExist:
+                form.add_error('recipient_wallet', 'Wallet number not found.')
+                return render(request, self.template_name, {
+                    'form': form, 'wallets': wallets, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+                })
+
+            if recipient.pk == wallet.pk:
+                form.add_error('recipient_wallet', 'You cannot transfer to your own wallet.')
+                return render(request, self.template_name, {
+                    'form': form, 'wallets': wallets, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+                })
+
+            if wallet.balance < d['amount']:
+                form.add_error('amount', f'Insufficient balance. Available: {wallet.balance} {wallet.currency}')
+                return render(request, self.template_name, {
+                    'form': form, 'wallets': wallets, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+                })
+
+            with db_transaction.atomic():
+                tx = Transaction.objects.create(
+                    wallet=wallet,
+                    transaction_type='transfer',
+                    amount=d['amount'],
+                    status='completed',
+                    description=d.get('description', ''),
+                    reference=f'TRF-{uuid.uuid4().hex[:8].upper()}',
+                )
+                Transfer.objects.create(
+                    transaction=tx,
+                    sender_wallet=wallet,
+                    receiver_wallet=recipient,
+                )
+                wallet.balance    -= d['amount']
+                recipient.balance += d['amount']
+                wallet.save()
+                recipient.save()
+                
+                # Notify both sender and receiver
+                NotificationService.notify_transfer_sent(
+                    sender_user=request.user,
+                    receiver_user=recipient.user,
+                    amount=d['amount'],
+                    currency=wallet.currency,
+                    transaction=tx
+                )
+                NotificationService.notify_transfer_received(
+                    sender_user=request.user,
+                    receiver_user=recipient.user,
+                    amount=d['amount'],
+                    currency=wallet.currency,
+                    transaction=tx
+                )
+                Notification.objects.create(
+                    user=request.user,
+                    transaction=tx,
+                    title='Money Sent',
+                    message=f'You sent {d["amount"]} {wallet.currency} to {recipient.user.full_name}.',
+                )
+
+            messages.success(request, f'Successfully sent {d["amount"]} {wallet.currency} to {recipient.wallet_number}!')
+            return redirect('dashboard')
+
+        wallet = wallets.filter(id=request.POST.get('sender_wallet')).first() or wallets.first()
+        return render(request, self.template_name, {
+            'form': form, 'wallets': wallets, 'wallet': wallet, 'kyc_verified': kyc_verified, 'has_pin': has_pin, 'otp_required': security.otp_enabled, 'otp_challenge': False, 'active_page': 'send'
+        })
+
+
+class TopupView(LoginRequiredMixin, View):
+    """GET/POST /topup/ — Top up wallet balance."""
+    login_url = '/login/'
+    template_name = 'wallet/topup.html'
+    fee_amount = Decimal('0')
+
+    def _create_submission_token(self, request):
+        token = uuid.uuid4().hex
+        request.session['topup_submission_token'] = token
+        return token
+
+    def get(self, request):
+        wallets = Wallet.objects.filter(user=request.user)
+        wallet = wallets.first()
+        return render(request, self.template_name, {
+            'form': TopupForm(user=request.user),
+            'wallets': wallets,
+            'wallet': wallet,
+            'active_page': 'topup',
+            'transaction_fee': self.fee_amount,
+            'submission_token': self._create_submission_token(request),
+        })
+
+    def post(self, request):
+        wallets = Wallet.objects.filter(user=request.user)
+        form = TopupForm(request.POST, user=request.user)
+
+        if not wallets.exists():
+            messages.error(request, 'You do not have a wallet yet.')
+            return redirect('dashboard')
+
+        if form.is_valid():
+            submitted_token = request.POST.get('submission_token')
+            session_token = request.session.get('topup_submission_token')
+            if not submitted_token or submitted_token != session_token:
+                messages.error(request, 'This top up request was already submitted. Please create a new one.')
+                return redirect('topup')
+
+            request.session.pop('topup_submission_token', None)
+            wallet = form.cleaned_data['wallet']
+            d = form.cleaned_data
+            payment_label = dict(TopupForm.PAYMENT_CHOICES).get(d['payment_method'], d['payment_method'])
+            with db_transaction.atomic():
+                tx = Transaction.objects.create(
+                    wallet=wallet,
+                    transaction_type='topup',
+                    amount=d['amount'],
+                    status='completed',
+                    description=f'Top-up via {payment_label}',
+                    reference=f'TOP-{uuid.uuid4().hex[:8].upper()}',
+                )
+                Topup.objects.create(
+                    transaction=tx,
+                    payment_method=d['payment_method'],
+                    provider=payment_label,
+                )
+                wallet.balance += d['amount']
+                wallet.save()
+                
+                # Notify user of successful top-up
+                NotificationService.notify_topup_completed(
+                    user=request.user,
+                    amount=d['amount'],
+                    currency=wallet.currency,
+                    transaction=tx,
+                    payment_method=payment_label
+                )
+
+            success_message = f'ការបញ្ចូលលុយបានជោគជ័យ ចំនួន {d["amount"]} {wallet.currency}!'
+            request.session['topup_success_speech'] = success_message
+            messages.success(request, success_message)
+            return redirect('dashboard')
+
+        wallet = wallets.filter(id=request.POST.get('wallet')).first() or wallets.first()
+        return render(request, self.template_name, {
+            'form': form,
+            'wallets': wallets,
+            'wallet': wallet,
+            'active_page': 'topup',
+            'transaction_fee': self.fee_amount,
+            'submission_token': request.session.get('topup_submission_token') or self._create_submission_token(request),
+        })
+
+
+class BillPaymentPageView(LoginRequiredMixin, View):
+    """GET/POST /bill-payment/ — Pay a bill from the authenticated user's wallet."""
+    login_url = '/login/'
+    template_name = 'wallet/bill_payment.html'
+
+    def _prepare_context(self, request, form=None, wallet=None, wallets=None, billers=None, categories=None, kyc_verified=True, has_pin=True, otp_challenge=False):
+        security, _ = Security.objects.get_or_create(user=request.user)
+        wallets = wallets or Wallet.objects.filter(user=request.user)
+        wallet = wallet or wallets.first()
+        billers = billers or Biller.objects.filter(status='active')
+        # Get unique categories from active billers
+        categories = categories or Biller.objects.filter(status='active').exclude(category__isnull=True).exclude(category='').values_list('category', flat=True).distinct().order_by('category')
+        return {
+            'form': form or BillPaymentForm(user=request.user),
+            'wallets': wallets,
+            'wallet': wallet,
+            'billers': billers,
+            'categories': categories,
+            'kyc_verified': kyc_verified,
+            'has_pin': has_pin,
+            'otp_required': security.otp_enabled,
+            'otp_challenge': otp_challenge,
+            'active_page': 'bill_payment',
+        }
+
+    def get(self, request):
+        wallets = Wallet.objects.filter(user=request.user)
+        billers = Biller.objects.filter(status='active')
+        categories = Biller.objects.filter(status='active').exclude(category__isnull=True).exclude(category='').values_list('category', flat=True).distinct().order_by('category')
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        kyc_verified = bool(verification and verification.verification_status == 'verified')
+        security, _ = Security.objects.get_or_create(user=request.user)
+        has_pin = bool(security.pin_hash)
+
+        if not kyc_verified:
+            messages.warning(request, 'KYC verification is required to pay bills. Please complete your KYC verification.')
+        elif not has_pin:
+            messages.warning(request, 'You must set up a transaction PIN in your profile settings before paying bills.')
+
+        return render(request, self.template_name, self._prepare_context(
+            request, wallets=wallets, billers=billers, categories=categories, kyc_verified=kyc_verified, has_pin=has_pin
+        ))
+
+    def post(self, request):
+        wallets = Wallet.objects.filter(user=request.user)
+        form = BillPaymentForm(request.POST, user=request.user)
+
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        kyc_verified = bool(verification and verification.verification_status == 'verified')
+        security, _ = Security.objects.get_or_create(user=request.user)
+        has_pin = bool(security.pin_hash)
+
+        if not kyc_verified:
+            messages.error(request, 'KYC verification is required to pay bills. Please complete your KYC verification.')
+            return render(request, self.template_name, self._prepare_context(
+                request, form=form, wallets=wallets, kyc_verified=False, has_pin=has_pin
+            ))
+
+        if not has_pin:
+            messages.error(request, 'You must set up a transaction PIN in your profile settings before paying bills.')
+            return redirect('profile')
+
+        if not wallets.exists():
+            messages.error(request, 'You do not have a wallet yet.')
+            return redirect('dashboard')
+
+        wallet = wallets.filter(id=request.POST.get('wallet')).first() or wallets.first()
+
+        if form.is_valid():
+            d = form.cleaned_data
+            wallet = d['wallet']
+
+            # Verify PIN
+            from django.contrib.auth.hashers import check_password
+            if not check_password(d['pin'], security.pin_hash):
+                form.add_error('pin', 'Invalid transaction PIN.')
+                return render(request, self.template_name, self._prepare_context(
+                    request, form=form, wallet=wallet, wallets=wallets,
+                    kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=False
+                ))
+
+            # Verify OTP if enabled
+            if security.otp_enabled:
+                otp_code = d.get('otp_code')
+                if not otp_code:
+                    otp = str(random.randint(100000, 999999))
+                    security.temp_otp = otp
+                    security.temp_otp_expiry = timezone.now() + timezone.timedelta(minutes=5)
+                    security.save()
+
+                    Notification.objects.create(
+                        user=request.user,
+                        title='Bill Payment OTP Code',
+                        message=f'Your OTP code for bill payment is: {otp}',
+                    )
+                    messages.info(request, 'An OTP has been generated. Please check your notifications to verify.')
+
+                    return render(request, self.template_name, self._prepare_context(
+                        request, form=form, wallet=wallet, wallets=wallets,
+                        kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=True
+                    ))
+
+                if security.temp_otp != otp_code or security.temp_otp_expiry < timezone.now():
+                    form.add_error('otp_code', 'Invalid or expired OTP code.')
+                    return render(request, self.template_name, self._prepare_context(
+                        request, form=form, wallet=wallet, wallets=wallets,
+                        kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=True
+                    ))
+
+            # Clear temporary OTP once validation succeeds
+            if security.otp_enabled:
+                security.temp_otp = None
+                security.temp_otp_expiry = None
+                security.save()
+
+            # Check wallet status
+            if wallet.status != 'active':
+                form.add_error(None, 'Selected wallet is not active.')
+                return render(request, self.template_name, self._prepare_context(
+                    request, form=form, wallet=wallet, wallets=wallets,
+                    kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=False
+                ))
+
+            if wallet.balance < d['amount']:
+                form.add_error('amount', f'Insufficient balance. Available: {wallet.balance} {wallet.currency}')
+                return render(request, self.template_name, self._prepare_context(
+                    request, form=form, wallet=wallet, wallets=wallets,
+                    kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=False
+                ))
+
+            # Transaction limits
+            today = timezone.now().date()
+            daily_total = Transaction.objects.filter(
+                wallet=wallet,
+                transaction_type='bill_payment',
+                created_at__date=today
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+            limit, _ = TransactionLimit.objects.get_or_create(user=request.user)
+            if limit.daily_limit > 0 and daily_total + d['amount'] > limit.daily_limit:
+                form.add_error('amount', f'Daily bill payment limit exceeded. Limit: {limit.daily_limit}, Already paid: {daily_total}')
+                return render(request, self.template_name, self._prepare_context(
+                    request, form=form, wallet=wallet, wallets=wallets,
+                    kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=False
+                ))
+
+            month_start = today.replace(day=1)
+            monthly_total = Transaction.objects.filter(
+                wallet=wallet,
+                transaction_type='bill_payment',
+                created_at__date__gte=month_start
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+            if limit.monthly_limit > 0 and monthly_total + d['amount'] > limit.monthly_limit:
+                form.add_error('amount', f'Monthly bill payment limit exceeded. Limit: {limit.monthly_limit}, Already paid: {monthly_total}')
+                return render(request, self.template_name, self._prepare_context(
+                    request, form=form, wallet=wallet, wallets=wallets,
+                    kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=False
+                ))
+
+            with db_transaction.atomic():
+                biller = d.get('biller')
+                bill_type = biller.category.lower().replace(' ', '_').replace('/', '_') if biller and biller.category else 'other'
+                account_reference = biller.account_number if biller else 'N/A'
+                
+                # Get biller's wallet (if they have a user account)
+                biller_wallet = biller.wallet if biller and biller.user else None
+                
+                # Create transaction for customer
+                tx = Transaction.objects.create(
+                    wallet=wallet,
+                    biller=biller,
+                    transaction_type='bill_payment',
+                    amount=d['amount'],
+                    status='completed',
+                    description=d.get('description', f'Bill payment for {account_reference}'),
+                    reference=f'BILL-{uuid.uuid4().hex[:8].upper()}',
+                )
+                bill_payment = BillPayment.objects.create(
+                    transaction=tx,
+                    bill_type=bill_type,
+                    account_reference=account_reference,
+                )
+                
+                # Deduct from customer wallet
+                wallet.balance -= d['amount']
+                wallet.save()
+                
+                # Credit biller's wallet (if they have one)
+                if biller_wallet:
+                    biller_wallet.balance += d['amount']
+                    biller_wallet.save()
+                    
+                    # Create transaction record for biller
+                    biller_tx = Transaction.objects.create(
+                        wallet=biller_wallet,
+                        biller=biller,
+                        transaction_type='bill_payment_received',
+                        amount=d['amount'],
+                        status='completed',
+                        description=f'Payment received from {request.user.full_name} for {account_reference}',
+                        reference=f'BILL-RCV-{uuid.uuid4().hex[:8].upper()}',
+                    )
+                    
+                    # Notify biller
+                    Notification.objects.create(
+                        user=biller.user,
+                        transaction=biller_tx,
+                        notification_type='bill_payment',
+                        title='Payment Received',
+                        message=f'You received {d["amount"]} {wallet.currency} from {request.user.full_name} for bill payment.',
+                    )
+
+                NotificationService.notify_bill_payment_completed(
+                    user=request.user,
+                    amount=d['amount'],
+                    currency=wallet.currency,
+                    transaction=tx,
+                    bill_type=bill_payment.bill_type,
+                    account_reference=bill_payment.account_reference
+                )
+                AuditLog.objects.create(
+                    user=request.user,
+                    action=f'Bill payment {d["amount"]} {wallet.currency} for {bill_payment.bill_type} account {bill_payment.account_reference}',
+                    ip_address=request.META.get('REMOTE_ADDR'),
+                )
+
+            messages.success(
+                request,
+                f'Successfully paid {d["amount"]} {wallet.currency} for {bill_payment.bill_type} bill (Account: {bill_payment.account_reference}).'
+            )
+            return redirect('dashboard')
+
+        return render(request, self.template_name, self._prepare_context(
+            request, form=form, wallet=wallet, wallets=wallets,
+            kyc_verified=kyc_verified, has_pin=has_pin, otp_challenge=False
+        ))
+
+
+class ProfileView(LoginRequiredMixin, View):
+    """GET/POST /profile/ — View & update profile, change password, manage security PIN and OTP."""
+    login_url = '/login/'
+    template_name = 'wallet/profile.html'
+
+    def get(self, request):
+        security, _ = Security.objects.get_or_create(user=request.user)
+        profile_form  = ProfileUpdateForm(initial={
+            'full_name': request.user.full_name,
+            'phone':     request.user.phone,
+        })
+        password_form = ChangePasswordForm()
+        pin_form = ChangePinForm(has_pin=bool(security.pin_hash))
+        return render(request, self.template_name, {
+            'profile_form':  profile_form,
+            'password_form': password_form,
+            'pin_form':      pin_form,
+            'security':      security,
+            'active_page':   'profile',
+        })
+
+    def post(self, request):
+        action = request.POST.get('action')
+        security, _ = Security.objects.get_or_create(user=request.user)
+        profile_form  = ProfileUpdateForm(initial={'full_name': request.user.full_name, 'phone': request.user.phone})
+        password_form = ChangePasswordForm()
+        pin_form = ChangePinForm(has_pin=bool(security.pin_hash))
+
+        if action == 'update_profile':
+            profile_form = ProfileUpdateForm(request.POST)
+            if profile_form.is_valid():
+                d = profile_form.cleaned_data
+                request.user.full_name = d['full_name']
+                request.user.phone     = d['phone']
+                request.user.save()
+                messages.success(request, 'Profile updated successfully!')
+                return redirect('profile')
+
+        elif action == 'change_password':
+            password_form = ChangePasswordForm(request.POST)
+            if password_form.is_valid():
+                d = password_form.cleaned_data
+                if not request.user.check_password(d['old_password']):
+                    password_form.add_error('old_password', 'Current password is incorrect.')
+                else:
+                    request.user.set_password(d['new_password'])
+                    request.user.save()
+                    auth_login(request, request.user)  # keep session alive
+                    NotificationService.notify_password_changed(user=request.user)
+                    messages.success(request, 'Password changed successfully!')
+                    return redirect('profile')
+
+        elif action == 'change_pin':
+            pin_form = ChangePinForm(request.POST, has_pin=bool(security.pin_hash))
+            if pin_form.is_valid():
+                d = pin_form.cleaned_data
+                from django.contrib.auth.hashers import make_password, check_password
+                if security.pin_hash:
+                    if not check_password(d['old_pin'], security.pin_hash):
+                        pin_form.add_error('old_pin', 'Current PIN is incorrect.')
+                        return render(request, self.template_name, {
+                            'profile_form':  profile_form,
+                            'password_form': password_form,
+                            'pin_form':      pin_form,
+                            'security':      security,
+                            'active_page':   'profile',
+                        })
+                security.pin_hash = make_password(d['new_pin'])
+                security.save()
+                messages.success(request, 'Transaction PIN updated successfully!')
+                return redirect('profile')
+
+        elif action == 'toggle_security':
+            otp_enabled = request.POST.get('otp_enabled') == 'on'
+            security.otp_enabled = otp_enabled
+            security.two_factor_enabled = otp_enabled
+            security.save()
+            messages.success(request, f"OTP validation {'enabled' if otp_enabled else 'disabled'} successfully!")
+            return redirect('profile')
+
+        return render(request, self.template_name, {
+            'profile_form':  profile_form,
+            'password_form': password_form,
+            'pin_form':      pin_form,
+            'security':      security,
+            'active_page':   'profile',
+        })
+
+
+class UserReportsView(LoginRequiredMixin, View):
+    """GET /reports/ — View daily, monthly, and annual transaction reports."""
+    login_url = '/login/'
+    template_name = 'wallet/reports.html'
+
+    def get(self, request):
+        wallet = Wallet.objects.filter(user=request.user).first()
+        report_type = request.GET.get('report_type', 'daily')
+        selected_date = request.GET.get('date')
+        selected_month = request.GET.get('month')
+        selected_year = request.GET.get('year')
+
+        from datetime import datetime, timedelta
+        from django.db.models import Sum, Count
+        from django.db.models.functions import TruncDate, TruncMonth, TruncYear
+
+        context = {
+            'wallet': wallet,
+            'report_type': report_type,
+            'active_page': 'reports',
+        }
+
+        if not wallet:
+            context['no_wallet'] = True
+            return render(request, self.template_name, context)
+
+        # Get user's wallet IDs for filtering
+        user_wallet_ids = Wallet.objects.filter(user=request.user).values_list('id', flat=True)
+
+        # Daily Report
+        if report_type == 'daily':
+            if selected_date:
+                try:
+                    report_date = datetime.strptime(selected_date, '%Y-%m-%d').date()
+                except ValueError:
+                    report_date = timezone.now().date()
+            else:
+                report_date = timezone.now().date()
+
+            # Get all transactions for this day (sent from user's wallets + received by user's wallets)
+            sent_transactions = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                created_at__date=report_date
+            ).select_related('wallet', 'merchant', 'biller').order_by('-created_at')
+
+            # Received transfers
+            received_transfers = Transfer.objects.filter(
+                receiver_wallet__in=user_wallet_ids,
+                created_at__date=report_date
+            ).select_related('transaction', 'sender_wallet__user').order_by('-created_at')
+
+            # Calculate totals
+            total_sent = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                transaction_type='transfer',
+                created_at__date=report_date
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+            total_topup = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                transaction_type='topup',
+                created_at__date=report_date
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+            total_received = Transfer.objects.filter(
+                receiver_wallet__in=user_wallet_ids,
+                created_at__date=report_date
+            ).aggregate(total=Sum('transaction__amount'))['total'] or Decimal('0')
+
+            # Count by type
+            transaction_counts = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                created_at__date=report_date
+            ).values('transaction_type').annotate(
+                count=Count('id'),
+                total=Sum('amount')
+            ).order_by('transaction_type')
+
+            context.update({
+                'report_date': report_date,
+                'sent_transactions': sent_transactions,
+                'received_transfers': received_transfers,
+                'total_sent': total_sent,
+                'total_topup': total_topup,
+                'total_received': total_received,
+                'transaction_counts': transaction_counts,
+                'net_flow': total_received + total_topup - total_sent,
+            })
+
+        # Monthly Report
+        elif report_type == 'monthly':
+            if selected_month:
+                try:
+                    report_month = datetime.strptime(selected_month, '%Y-%m').date()
+                except ValueError:
+                    report_month = timezone.now().date().replace(day=1)
+            else:
+                report_month = timezone.now().date().replace(day=1)
+
+            month_start = report_month.replace(day=1)
+            if report_month.month == 12:
+                month_end = report_month.replace(year=report_month.year + 1, month=1, day=1)
+            else:
+                month_end = report_month.replace(month=report_month.month + 1, day=1)
+
+            # Daily breakdown for the month
+            daily_breakdown = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                created_at__date__gte=month_start,
+                created_at__date__lt=month_end
+            ).annotate(
+                day=TruncDate('created_at')
+            ).values('day').annotate(
+                count=Count('id'),
+                total_sent=Sum('amount', filter=Q(transaction_type='transfer')),
+                total_topup=Sum('amount', filter=Q(transaction_type='topup')),
+            ).order_by('day')
+
+            # Received transfers by day
+            received_by_day = Transfer.objects.filter(
+                receiver_wallet__in=user_wallet_ids,
+                created_at__date__gte=month_start,
+                created_at__date__lt=month_end
+            ).annotate(
+                day=TruncDate('created_at')
+            ).values('day').annotate(
+                total_received=Sum('transaction__amount'),
+                count=Count('id')
+            ).order_by('day')
+
+            # Monthly totals
+            monthly_sent = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                transaction_type='transfer',
+                created_at__date__gte=month_start,
+                created_at__date__lt=month_end
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+            monthly_topup = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                transaction_type='topup',
+                created_at__date__gte=month_start,
+                created_at__date__lt=month_end
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+            monthly_received = Transfer.objects.filter(
+                receiver_wallet__in=user_wallet_ids,
+                created_at__date__gte=month_start,
+                created_at__date__lt=month_end
+            ).aggregate(total=Sum('transaction__amount'))['total'] or Decimal('0')
+
+            # Transaction type summary
+            transaction_types = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                created_at__date__gte=month_start,
+                created_at__date__lt=month_end
+            ).values('transaction_type').annotate(
+                count=Count('id'),
+                total=Sum('amount')
+            ).order_by('transaction_type')
+
+            context.update({
+                'report_month': report_month,
+                'daily_breakdown': daily_breakdown,
+                'received_by_day': received_by_day,
+                'monthly_sent': monthly_sent,
+                'monthly_topup': monthly_topup,
+                'monthly_received': monthly_received,
+                'monthly_net': monthly_received + monthly_topup - monthly_sent,
+                'transaction_types': transaction_types,
+            })
+
+        # Annual Report
+        elif report_type == 'annual':
+            if selected_year:
+                try:
+                    report_year = int(selected_year)
+                except ValueError:
+                    report_year = timezone.now().year
+            else:
+                report_year = timezone.now().year
+
+            year_start = datetime(report_year, 1, 1).date()
+            year_end = datetime(report_year + 1, 1, 1).date()
+
+            # Monthly breakdown for the year
+            monthly_breakdown = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                created_at__date__gte=year_start,
+                created_at__date__lt=year_end
+            ).annotate(
+                month=TruncMonth('created_at')
+            ).values('month').annotate(
+                count=Count('id'),
+                total_sent=Sum('amount', filter=Q(transaction_type='transfer')),
+                total_topup=Sum('amount', filter=Q(transaction_type='topup')),
+            ).order_by('month')
+
+            # Received transfers by month
+            received_by_month = Transfer.objects.filter(
+                receiver_wallet__in=user_wallet_ids,
+                created_at__date__gte=year_start,
+                created_at__date__lt=year_end
+            ).annotate(
+                month=TruncMonth('created_at')
+            ).values('month').annotate(
+                total_received=Sum('transaction__amount'),
+                count=Count('id')
+            ).order_by('month')
+
+            # Annual totals
+            annual_sent = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                transaction_type='transfer',
+                created_at__date__gte=year_start,
+                created_at__date__lt=year_end
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+            annual_topup = Transaction.objects.filter(
+                wallet__in=user_wallet_ids,
+                transaction_type='topup',
+                created_at__date__gte=year_start,
+                created_at__date__lt=year_end
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+            annual_received = Transfer.objects.filter(
+                receiver_wallet__in=user_wallet_ids,
+                created_at__date__gte=year_start,
+                created_at__date__lt=year_end
+            ).aggregate(total=Sum('transaction__amount'))['total'] or Decimal('0')
+
+            # Quarter summary
+            quarter_totals = []
+            for q in range(1, 5):
+                q_start = datetime(report_year, (q - 1) * 3 + 1, 1).date()
+                q_end = datetime(report_year, q * 3 + 1 if q < 4 else 1, 1).date() if q < 4 else datetime(report_year + 1, 1, 1).date()
+
+                q_sent = Transaction.objects.filter(
+                    wallet__in=user_wallet_ids,
+                    transaction_type='transfer',
+                    created_at__date__gte=q_start,
+                    created_at__date__lt=q_end
+                ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+                q_topup = Transaction.objects.filter(
+                    wallet__in=user_wallet_ids,
+                    transaction_type='topup',
+                    created_at__date__gte=q_start,
+                    created_at__date__lt=q_end
+                ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+                q_received = Transfer.objects.filter(
+                    receiver_wallet__in=user_wallet_ids,
+                    created_at__date__gte=q_start,
+                    created_at__date__lt=q_end
+                ).aggregate(total=Sum('transaction__amount'))['total'] or Decimal('0')
+
+                quarter_totals.append({
+                    'quarter': f'Q{q}',
+                    'sent': q_sent,
+                    'topup': q_topup,
+                    'received': q_received,
+                    'net': q_received + q_topup - q_sent,
+                })
+
+            context.update({
+                'report_year': report_year,
+                'monthly_breakdown': monthly_breakdown,
+                'received_by_month': received_by_month,
+                'annual_sent': annual_sent,
+                'annual_topup': annual_topup,
+                'annual_received': annual_received,
+                'annual_net': annual_received + annual_topup - annual_sent,
+                'quarter_totals': quarter_totals,
+            })
+
+        return render(request, self.template_name, context)
+
+
+class AdminRequiredMixin(LoginRequiredMixin):
+    login_url = '/login/'
+
+    def dispatch(self, request, *args, **kwargs):
+        if not (request.user.is_staff or request.user.is_superuser or request.user.role == 'admin'):
+            raise PermissionDenied('You do not have permission to access this page.')
+        return super().dispatch(request, *args, **kwargs)
+
+
+class KYCVerificationView(LoginRequiredMixin, View):
+    """GET/POST /kyc/ — KYC document submission and status."""
+    login_url = '/login/'
+    template_name = 'wallet/kyc.html'
+
+    def get(self, request):
+        verification, _ = IdentityVerification.objects.get_or_create(user=request.user)
+        initial = {
+            'full_name':     request.user.full_name,
+            'date_of_birth': verification.date_of_birth,
+            'address':       verification.address,
+            'nationality':   verification.nationality,
+            'national_id':   verification.national_id,
+        }
+        form = KYCVerificationForm(initial=initial)
+        return render(request, self.template_name, {
+            'form': form,
+            'verification': verification,
+            'active_page': 'kyc',
+        })
+
+    def post(self, request):
+        verification, _ = IdentityVerification.objects.get_or_create(user=request.user)
+        form = KYCVerificationForm(request.POST, request.FILES, user=request.user)
+        if form.is_valid():
+            d = form.cleaned_data
+            request.user.full_name = d['full_name']
+            request.user.save()
+            id_document = d['id_document']
+            
+            try:
+                # Upload ID document to Cloudinary
+                id_upload_result = upload_kyc_id_document(id_document, request.user.id)
+                if not id_upload_result:
+                    form.add_error('id_document', 'Failed to upload ID document. Please try again.')
+                    return render(request, self.template_name, {
+                        'form': form,
+                        'verification': verification,
+                        'active_page': 'kyc',
+                    })
+                id_document_url = id_upload_result['secure_url']
+                
+                # Handle selfie - either from file upload or camera capture
+                selfie_image = d.get('selfie_image')
+                selfie_image_data = request.POST.get('selfie_image_data')
+                
+                if selfie_image:
+                    # File upload to Cloudinary
+                    selfie_upload_result = upload_kyc_selfie(selfie_image, request.user.id)
+                    if not selfie_upload_result:
+                        form.add_error('selfie_image', 'Failed to upload selfie. Please try again.')
+                        return render(request, self.template_name, {
+                            'form': form,
+                            'verification': verification,
+                            'active_page': 'kyc',
+                        })
+                    selfie_image_url = selfie_upload_result['secure_url']
+                elif selfie_image_data:
+                    # Camera capture - base64 data
+                    import base64
+                    from django.core.files.base import ContentFile
+                    
+                    # Remove the data URL prefix if present
+                    if ';base64,' in selfie_image_data:
+                        format, imgstr = selfie_image_data.split(';base64,')
+                        ext = format.split('/')[-1] if '/' in format else 'jpg'
+                    else:
+                        imgstr = selfie_image_data
+                        ext = 'jpg'
+                    
+                    # Decode base64 and upload to Cloudinary
+                    image_data = base64.b64decode(imgstr)
+                    image_file = ContentFile(image_data, name=f'selfie_{request.user.id}.{ext}')
+                    selfie_upload_result = upload_kyc_selfie(image_file, request.user.id)
+                    if not selfie_upload_result:
+                        form.add_error('selfie_image', 'Failed to upload selfie. Please try again.')
+                        return render(request, self.template_name, {
+                            'form': form,
+                            'verification': verification,
+                            'active_page': 'kyc',
+                        })
+                    selfie_image_url = selfie_upload_result['secure_url']
+                else:
+                    form.add_error('selfie_image', 'Please provide a selfie image.')
+                    return render(request, self.template_name, {
+                        'form': form,
+                        'verification': verification,
+                        'active_page': 'kyc',
+                    })
+                
+                verification.date_of_birth = d['date_of_birth']
+                verification.address = d['address']
+                verification.nationality = d['nationality']
+                verification.national_id = d['national_id']
+                verification.id_document = id_document_url
+                verification.selfie_image = selfie_image_url
+                verification.verification_status = 'pending'
+                verification.verified_at = None
+                verification.save()
+                NotificationService.notify_kyc_submitted(user=request.user)
+                messages.success(request, 'KYC documents submitted successfully. Verification is pending.')
+                return redirect('kyc')
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"KYC submission error: {str(e)}")
+                form.add_error('national_id', 'This National ID is already registered with another account.')
+
+        return render(request, self.template_name, {
+            'form': form,
+            'verification': verification,
+            'active_page': 'kyc',
+        })
+
+
+class KYCReviewView(AdminRequiredMixin, View):
+    """GET/POST /kyc-review/ — Admin-only KYC approval and rejection."""
+    template_name = 'wallet/kyc_review.html'
+
+    def get(self, request):
+        submission_id = request.GET.get('submission')
+        status_filter = request.GET.get('status', 'all')
+
+        # Filter by status
+        queryset = IdentityVerification.objects.all()
+        if status_filter == 'pending':
+            queryset = queryset.filter(verification_status='pending')
+        elif status_filter == 'verified':
+            queryset = queryset.filter(verification_status='verified')
+        elif status_filter == 'rejected':
+            queryset = queryset.filter(verification_status='rejected')
+
+        submissions = queryset.order_by('-created_at')
+
+        # Get single submission for detail view
+        selected_submission = None
+        if submission_id:
+            try:
+                selected_submission = IdentityVerification.objects.get(id=submission_id)
+            except IdentityVerification.DoesNotExist:
+                pass
+
+        return render(request, self.template_name, {
+            'submissions': submissions,
+            'selected_submission': selected_submission,
+            'status_filter': status_filter,
+            'active_page': 'kyc_review',
+        })
+
+    def post(self, request):
+        action = request.POST.get('action')
+        submission_id = request.POST.get('submission_id')
+        rejection_reason = request.POST.get('rejection_reason', '').strip()
+
+        if not submission_id:
+            messages.error(request, 'No submission selected.')
+            return redirect('kyc_review')
+
+        try:
+            verification = IdentityVerification.objects.get(id=submission_id)
+        except IdentityVerification.DoesNotExist:
+            messages.error(request, 'Submission not found.')
+            return redirect('kyc_review')
+
+        if action == 'approve':
+            if verification.verification_status != 'verified':
+                verification.verification_status = 'verified'
+                verification.verified_at = timezone.now()
+                verification.rejection_reason = None  # Clear any previous rejection reason
+                verification.save(update_fields=['verification_status', 'verified_at', 'rejection_reason'])
+                NotificationService.notify_kyc_verified(user=verification.user)
+                messages.success(request, f'KYC for {verification.user.full_name} has been approved.')
+            else:
+                messages.info(request, 'This submission is already approved.')
+
+        elif action == 'reject':
+            if not rejection_reason:
+                messages.error(request, 'Please provide a rejection reason.')
+                return redirect(f'{request.path}?submission={submission_id}')
+
+            if verification.verification_status != 'rejected':
+                verification.verification_status = 'rejected'
+                verification.verified_at = None
+                verification.rejection_reason = rejection_reason
+                verification.save(update_fields=['verification_status', 'verified_at', 'rejection_reason'])
+                NotificationService.notify_kyc_rejected(
+                    user=verification.user,
+                    rejection_reason=rejection_reason
+                )
+                messages.success(request, f'KYC for {verification.user.full_name} has been rejected.')
+            else:
+                messages.info(request, 'This submission is already rejected.')
+
+        return redirect('kyc_review')
+
+
+# ─────────────────────────────────────────
+#  AUTH VIEWS
+# ─────────────────────────────────────────
+
+class RegisterView(generics.CreateAPIView):
+    """
+    POST /api/auth/register/
+    Register a new user. No authentication required.
+    Auto-creates a KHR wallet for the user.
+    """
+    queryset = User.objects.all()
+    serializer_class = RegisterSerializer
+    permission_classes = [AllowAny]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        refresh = RefreshToken.for_user(user)
+        response = Response({
+            'message': 'Registration successful.',
+            'user': UserProfileSerializer(user).data,
+            'tokens': {
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+            }
+        }, status=status.HTTP_201_CREATED)
+        _set_jwt_cookies(response, str(refresh.access_token), str(refresh))
+        return response
+
+
+class LoginView(APIView):
+    """
+    POST /api/auth/login/
+    Login with email + password. Returns JWT tokens.
+    No authentication required.
+    """
+    permission_classes = [AllowAny]
+    serializer_class = LoginSerializer
+
+    def post(self, request):
+        email = request.data.get('email')
+        password = request.data.get('password')
+
+        if not email or not password:
+            return Response(
+                {'error': 'Email and password are required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Authenticate using username=email (since we set username = email on register)
+        user = authenticate(request, username=email, password=password)
+
+        if user is None:
+            return Response(
+                {'error': 'Invalid email or password.'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        if user.status != 'active':
+            return Response(
+                {'error': 'Your account is inactive. Please contact support.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Get IP address for security notification
+        ip_address = request.META.get('REMOTE_ADDR')
+        NotificationService.notify_login(user=user, ip_address=ip_address)
+
+        refresh = RefreshToken.for_user(user)
+        response = Response({
+            'message': 'Login successful.',
+            'user': UserProfileSerializer(user).data,
+            'tokens': {
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+            }
+        }, status=status.HTTP_200_OK)
+        _set_jwt_cookies(response, str(refresh.access_token), str(refresh))
+        return response
+
+
+class LogoutView(APIView):
+    """
+    POST /api/auth/logout/
+    Blacklist the refresh token and clear JWT cookies.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            refresh_token = request.data.get('refresh')
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+            response = Response({'message': 'Logged out successfully.'}, status=status.HTTP_200_OK)
+            response.delete_cookie('access_token')
+            response.delete_cookie('refresh_token')
+            return response
+        except Exception:
+            return Response({'error': 'Invalid or expired token.'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AuthTokenRefreshView(TokenRefreshView):
+    """POST /api/auth/token/refresh/ — Refresh access token and update cookies."""
+
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == 200:
+            refresh = request.data.get('refresh')
+            access_token = response.data.get('access')
+            _set_jwt_cookies(response, access_token, refresh)
+        return response
+
+
+class MeView(generics.RetrieveUpdateAPIView):
+    """
+    GET  /api/auth/me/ — Get current user profile.
+    PUT  /api/auth/me/ — Update current user profile (full_name, phone).
+    PATCH /api/auth/me/ — Partial update.
+    """
+    serializer_class = UserProfileSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        return self.request.user
+
+
+class ChangePasswordView(APIView):
+    """
+    POST /api/auth/change-password/
+    Change the authenticated user's password.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChangePasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+        if not user.check_password(serializer.validated_data['old_password']):
+            return Response(
+                {'error': 'Old password is incorrect.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user.set_password(serializer.validated_data['new_password'])
+        user.save()
+        NotificationService.notify_password_changed(user=user)
+        return Response({'message': 'Password changed successfully.'}, status=status.HTTP_200_OK)
+
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
@@ -76,10 +1889,247 @@ class MerchantQRViewSet(viewsets.ModelViewSet):
 class BillPaymentViewSet(viewsets.ModelViewSet):
     queryset = BillPayment.objects.all()
     serializer_class = BillPaymentSerializer
+    permission_classes = [IsAuthenticated]
+
+    def create(self, request, *args, **kwargs):
+        data = request.data
+
+        # KYC verification required
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        if not (verification and verification.verification_status == 'verified'):
+            return Response(
+                {'error': 'KYC verification is required to pay bills. Please complete your KYC verification.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Security setup required
+        security, _ = Security.objects.get_or_create(user=request.user)
+        if not security.pin_hash:
+            return Response(
+                {'error': 'Please set up a transaction PIN in your security settings before paying bills.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        pin = data.get('pin')
+        if not pin:
+            return Response({'error': 'Transaction PIN is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from django.contrib.auth.hashers import check_password
+        if not check_password(pin, security.pin_hash):
+            return Response({'error': 'Invalid transaction PIN.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # OTP verification
+        if security.otp_enabled:
+            otp = data.get('otp')
+            if not otp:
+                otp_val = str(random.randint(100000, 999999))
+                security.temp_otp = otp_val
+                security.temp_otp_expiry = timezone.now() + timezone.timedelta(minutes=5)
+                security.save()
+
+                Notification.objects.create(
+                    user=request.user,
+                    title='Bill Payment OTP Code',
+                    message=f'Your OTP code for bill payment is: {otp_val}',
+                )
+                return Response({
+                    'error': 'OTP verification required.',
+                    'otp_required': True
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            if security.temp_otp != otp or security.temp_otp_expiry < timezone.now():
+                return Response({'error': 'Invalid or expired OTP code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            security.temp_otp = None
+            security.temp_otp_expiry = None
+            security.save()
+
+        # Wallet validation
+        wallet_id = data.get('wallet')
+        try:
+            wallet = Wallet.objects.get(id=wallet_id, user=request.user)
+        except (Wallet.DoesNotExist, ValueError, TypeError):
+            return Response({'error': 'Wallet not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if wallet.status != 'active':
+            return Response({'error': 'Wallet is not active.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        amount = Decimal(str(data.get('amount', 0)))
+        if amount <= 0:
+            return Response({'error': 'Invalid amount.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if wallet.balance < amount:
+            return Response(
+                {'error': f'Insufficient balance. Available: {wallet.balance} {wallet.currency}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Transaction limits
+        today = timezone.now().date()
+        daily_total = Transaction.objects.filter(
+            wallet=wallet,
+            transaction_type='bill_payment',
+            created_at__date=today
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        limit, _ = TransactionLimit.objects.get_or_create(user=request.user)
+        if limit.daily_limit > 0 and daily_total + amount > limit.daily_limit:
+            return Response(
+                {'error': f'Daily bill payment limit exceeded. Limit: {limit.daily_limit}, Already paid: {daily_total}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        month_start = today.replace(day=1)
+        monthly_total = Transaction.objects.filter(
+            wallet=wallet,
+            transaction_type='bill_payment',
+            created_at__date__gte=month_start
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        if limit.monthly_limit > 0 and monthly_total + amount > limit.monthly_limit:
+            return Response(
+                {'error': f'Monthly bill payment limit exceeded. Limit: {limit.monthly_limit}, Already paid: {monthly_total}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            biller_id = data.get('biller')
+            biller = Biller.objects.get(id=biller_id, status='active') if biller_id else None
+        except (Biller.DoesNotExist, ValueError, TypeError):
+            return Response({'error': 'Biller not found or inactive.'}, status=status.HTTP_404_NOT_FOUND)
+
+        bill_type = biller.category.lower().replace(' ', '_').replace('/', '_') if biller and biller.category else 'other'
+        account_reference = biller.account_number if biller else 'N/A'
+        description = data.get('description', '')
+        if not description:
+            description = f'Bill payment for {account_reference}'
+
+        with db_transaction.atomic():
+            # Get biller's wallet (if they have a user account)
+            biller_wallet = biller.wallet if biller and biller.user else None
+            
+            tx = Transaction.objects.create(
+                wallet=wallet,
+                biller=biller,
+                transaction_type='bill_payment',
+                amount=amount,
+                status='completed',
+                description=description,
+                reference=f'BILL-{uuid.uuid4().hex[:8].upper()}',
+            )
+
+            bill_payment = BillPayment.objects.create(
+                transaction=tx,
+                bill_type=bill_type,
+                account_reference=account_reference,
+            )
+
+            # Deduct from customer wallet
+            wallet.balance -= amount
+            wallet.save()
+            
+            # Credit biller's wallet (if they have one)
+            if biller_wallet:
+                biller_wallet.balance += amount
+                biller_wallet.save()
+                
+                # Create transaction record for biller
+                biller_tx = Transaction.objects.create(
+                    wallet=biller_wallet,
+                    biller=biller,
+                    transaction_type='bill_payment_received',
+                    amount=amount,
+                    status='completed',
+                    description=f'Payment received from {request.user.full_name} for {account_reference}',
+                    reference=f'BILL-RCV-{uuid.uuid4().hex[:8].upper()}',
+                )
+                
+                # Notify biller
+                Notification.objects.create(
+                    user=biller.user,
+                    transaction=biller_tx,
+                    notification_type='bill_payment',
+                    title='Payment Received',
+                    message=f'You received {amount} {wallet.currency} from {request.user.full_name} for bill payment.',
+                )
+
+            NotificationService.notify_bill_payment_completed(
+                user=request.user,
+                amount=amount,
+                currency=wallet.currency,
+                transaction=tx,
+                bill_type=bill_payment.bill_type,
+                account_reference=bill_payment.account_reference
+            )
+            AuditLog.objects.create(
+                user=request.user,
+                action=f'Bill payment {amount} {wallet.currency} for {bill_payment.bill_type} account {bill_payment.account_reference}',
+                ip_address=request.META.get('REMOTE_ADDR'),
+            )
+
+        return Response({
+            'message': 'Bill payment successful.',
+            'bill_payment': BillPaymentSerializer(bill_payment).data,
+            'transaction': TransactionSerializer(tx).data,
+        }, status=status.HTTP_201_CREATED)
 
 class WithdrawalViewSet(viewsets.ModelViewSet):
     queryset = Withdrawal.objects.all()
     serializer_class = WithdrawalSerializer
+    permission_classes = [IsAuthenticated]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        # Get wallet and validate
+        wallet_id = request.data.get('wallet')
+        wallet = get_object_or_404(Wallet, id=wallet_id, user=request.user)
+        
+        # Get transaction data
+        transaction_data = request.data.get('transaction', {})
+        amount = Decimal(str(transaction_data.get('amount', 0)))
+        
+        if wallet.balance < amount:
+            return Response(
+                {'error': 'Insufficient balance.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        with db_transaction.atomic():
+            # Create transaction
+            tx = Transaction.objects.create(
+                wallet=wallet,
+                transaction_type='withdrawal',
+                amount=amount,
+                status='completed',
+                description=transaction_data.get('description', ''),
+                reference=f'WDR-{uuid.uuid4().hex[:8].upper()}',
+            )
+            
+            # Create withdrawal
+            withdrawal = Withdrawal.objects.create(
+                transaction=tx,
+                bank_name=request.data.get('bank_name', ''),
+                account_number=request.data.get('account_number', ''),
+            )
+            
+            # Deduct from wallet
+            wallet.balance -= amount
+            wallet.save()
+            
+            # Notify user
+            NotificationService.notify_withdrawal_completed(
+                user=request.user,
+                amount=amount,
+                currency=wallet.currency,
+                transaction=tx,
+                bank_name=withdrawal.bank_name,
+                account_number=withdrawal.account_number
+            )
+        
+        return Response({
+            'message': 'Withdrawal successful.',
+            'withdrawal': WithdrawalSerializer(withdrawal).data
+        }, status=status.HTTP_201_CREATED)
 
 class TopupViewSet(viewsets.ModelViewSet):
     queryset = Topup.objects.all()
@@ -88,7 +2138,1056 @@ class TopupViewSet(viewsets.ModelViewSet):
 class TransferViewSet(viewsets.ModelViewSet):
     queryset = Transfer.objects.all()
     serializer_class = TransferSerializer
+    permission_classes = [IsAuthenticated]
+
+    def create(self, request, *args, **kwargs):
+        # Check if user has verified KYC
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        if not (verification and verification.verification_status == 'verified'):
+            return Response(
+                {'error': 'KYC verification is required to create transfers. Please complete your KYC verification.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        return super().create(request, *args, **kwargs)
+
+
+class PeerToPeerTransferView(APIView):
+    """
+    POST /api/transfers/p2p/
+    Transfer money from authenticated user's wallet to another wallet.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        sender_wallet_id = request.data.get('sender_wallet_id')
+        recipient_wallet_number = request.data.get('recipient_wallet_number')
+        amount = request.data.get('amount')
+        description = request.data.get('description', '')
+
+        # Verify Security Settings (PIN and OTP)
+        security, _ = Security.objects.get_or_create(user=request.user)
+        if not security.pin_hash:
+            return Response({'error': 'Please set up a transaction PIN in your security settings before sending money.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        pin = request.data.get('pin')
+        if not pin:
+            return Response({'error': 'Transaction PIN is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        from django.contrib.auth.hashers import check_password
+        if not check_password(pin, security.pin_hash):
+            return Response({'error': 'Invalid transaction PIN.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if security.otp_enabled:
+            otp = request.data.get('otp')
+            if not otp:
+                import random
+                otp_val = str(random.randint(100000, 999999))
+                security.temp_otp = otp_val
+                security.temp_otp_expiry = timezone.now() + timezone.timedelta(minutes=5)
+                security.save()
+
+                Notification.objects.create(
+                    user=request.user,
+                    title='Transfer OTP Code',
+                    message=f'Your OTP code for sending money is: {otp_val}',
+                )
+                return Response({
+                    'error': 'OTP verification required.',
+                    'otp_required': True
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            if security.temp_otp != otp or security.temp_otp_expiry < timezone.now():
+                return Response({'error': 'Invalid or expired OTP code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Clear OTP on success
+        if security.otp_enabled:
+            security.temp_otp = None
+            security.temp_otp_expiry = None
+            security.save()
+
+        # Validate KYC
+        verification = IdentityVerification.objects.filter(user=request.user).first()
+        if not (verification and verification.verification_status == 'verified'):
+            return Response(
+                {'error': 'KYC verification required.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Get sender wallet
+        try:
+            sender_wallet = Wallet.objects.get(id=sender_wallet_id, user=request.user)
+        except Wallet.DoesNotExist:
+            return Response({'error': 'Sender wallet not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check wallet status
+        if sender_wallet.status != 'active':
+            return Response({'error': 'Sender wallet is not active.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get recipient wallet
+        try:
+            recipient_wallet = Wallet.objects.get(wallet_number=recipient_wallet_number)
+        except Wallet.DoesNotExist:
+            return Response({'error': 'Recipient wallet not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check recipient wallet status
+        if recipient_wallet.status != 'active':
+            return Response({'error': 'Recipient wallet is not active.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Prevent self-transfer
+        if sender_wallet.id == recipient_wallet.id:
+            return Response({'error': 'Cannot transfer to same wallet.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate amount
+        try:
+            amount = Decimal(str(amount))
+            if amount <= 0:
+                raise ValueError
+        except (ValueError, TypeError):
+            return Response({'error': 'Invalid amount.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check balance
+        if sender_wallet.balance < amount:
+            return Response(
+                {'error': f'Insufficient balance. Available: {sender_wallet.balance} {sender_wallet.currency}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check currency match
+        if sender_wallet.currency != recipient_wallet.currency:
+            return Response(
+                {'error': f'Currency mismatch. Sender: {sender_wallet.currency}, Recipient: {recipient_wallet.currency}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check transaction limits
+        today = timezone.now().date()
+        daily_total = Transaction.objects.filter(
+            wallet=sender_wallet,
+            transaction_type='transfer',
+            created_at__date=today
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        limit, _ = TransactionLimit.objects.get_or_create(user=request.user)
+        if limit.daily_limit > 0 and daily_total + amount > limit.daily_limit:
+            return Response(
+                {'error': f'Daily transfer limit exceeded. Limit: {limit.daily_limit}, Already sent: {daily_total}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Monthly limit check
+        month_start = today.replace(day=1)
+        monthly_total = Transaction.objects.filter(
+            wallet=sender_wallet,
+            transaction_type='transfer',
+            created_at__date__gte=month_start
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        if limit.monthly_limit > 0 and monthly_total + amount > limit.monthly_limit:
+            return Response(
+                {'error': f'Monthly transfer limit exceeded. Limit: {limit.monthly_limit}, Already sent: {monthly_total}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Execute transfer atomically
+        with db_transaction.atomic():
+            transaction = Transaction.objects.create(
+                wallet=sender_wallet,
+                transaction_type='transfer',
+                amount=amount,
+                status='completed',
+                description=description,
+                reference=f'TRF-{uuid.uuid4().hex[:8].upper()}',
+            )
+            transfer = Transfer.objects.create(
+                transaction=transaction,
+                sender_wallet=sender_wallet,
+                receiver_wallet=recipient_wallet,
+            )
+            sender_wallet.balance -= amount
+            recipient_wallet.balance += amount
+            sender_wallet.save()
+            recipient_wallet.save()
+
+            # Create audit log
+            AuditLog.objects.create(
+                user=request.user,
+                action=f'Transfer {amount} {sender_wallet.currency} to {recipient_wallet.wallet_number}',
+                ip_address=request.META.get('REMOTE_ADDR'),
+            )
+
+            # Create notifications
+            Notification.objects.create(
+                user=recipient_wallet.user,
+                transaction=transaction,
+                title='Money Received',
+                message=f'You received {amount} {sender_wallet.currency} from {request.user.full_name}.',
+            )
+            Notification.objects.create(
+                user=request.user,
+                transaction=transaction,
+                title='Money Sent',
+                message=f'You sent {amount} {sender_wallet.currency} to {recipient_wallet.user.full_name}.',
+            )
+
+        return Response({
+            'message': 'Transfer successful.',
+            'transfer': {
+                'id': transfer.id,
+                'reference': transaction.reference,
+                'amount': str(amount),
+                'currency': sender_wallet.currency,
+                'sender_wallet': sender_wallet.wallet_number,
+                'recipient_wallet': recipient_wallet.wallet_number,
+                'recipient_name': recipient_wallet.user.full_name,
+                'created_at': transfer.created_at,
+            }
+        }, status=status.HTTP_201_CREATED)
+
+
+class TransferHistoryView(APIView):
+    """
+    GET /api/transfers/history/
+    Get transfer history for authenticated user.
+    Query params:
+      - type: 'sent', 'received', or 'all' (default: 'all')
+      - limit: number of results to return (default: 50)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        transfer_type = request.query_params.get('type', 'all')
+        limit = int(request.query_params.get('limit', 50))
+
+        wallet_ids = Wallet.objects.filter(user=request.user).values_list('id', flat=True)
+
+        history = []
+
+        if transfer_type in ['sent', 'all']:
+            sent = Transfer.objects.filter(
+                sender_wallet__in=wallet_ids
+            ).select_related('transaction', 'receiver_wallet__user', 'sender_wallet').order_by('-created_at')[:limit]
+
+            for t in sent:
+                history.append({
+                    'type': 'sent',
+                    'amount': str(t.transaction.amount),
+                    'currency': t.sender_wallet.currency,
+                    'to_wallet_number': t.receiver_wallet.wallet_number,
+                    'to_user_name': t.receiver_wallet.user.full_name,
+                    'from_wallet_number': t.sender_wallet.wallet_number,
+                    'from_user_name': request.user.full_name,
+                    'date': t.created_at.isoformat(),
+                    'reference': t.transaction.reference,
+                    'description': t.transaction.description,
+                    'status': t.transaction.status,
+                })
+
+        if transfer_type in ['received', 'all']:
+            received = Transfer.objects.filter(
+                receiver_wallet__in=wallet_ids
+            ).select_related('transaction', 'sender_wallet__user', 'receiver_wallet').order_by('-created_at')[:limit]
+
+            for t in received:
+                history.append({
+                    'type': 'received',
+                    'amount': str(t.transaction.amount),
+                    'currency': t.receiver_wallet.currency,
+                    'from_wallet_number': t.sender_wallet.wallet_number,
+                    'from_user_name': t.sender_wallet.user.full_name,
+                    'to_wallet_number': t.receiver_wallet.wallet_number,
+                    'to_user_name': request.user.full_name,
+                    'date': t.created_at.isoformat(),
+                    'reference': t.transaction.reference,
+                    'description': t.transaction.description,
+                    'status': t.transaction.status,
+                })
+
+        # Sort by date descending
+        history.sort(key=lambda x: x['date'], reverse=True)
+
+        # Apply limit after combining
+        history = history[:limit]
+
+        return Response({
+            'count': len(history),
+            'transfers': history
+        })
+
+
+class AdminRequiredPermission(IsAuthenticated):
+    """Permission class that checks if user is admin/staff."""
+    def has_permission(self, request, view):
+        return bool(
+            request.user and
+            request.user.is_authenticated and
+            (request.user.is_staff or request.user.is_superuser or request.user.role == 'admin')
+        )
+
+
+class AdminAllTransactionsView(APIView):
+    """
+    GET /api/admin/transactions/
+    Admin endpoint to view all transactions in the system.
+    Query params:
+      - type: 'transfer', 'topup', 'withdrawal', 'bill_payment', 'all' (default: 'all')
+      - status: 'completed', 'pending', 'failed', 'refunded' (optional)
+      - user_id: filter by specific user (optional)
+      - start_date: YYYY-MM-DD (optional)
+      - end_date: YYYY-MM-DD (optional)
+      - limit: number of results (default: 100)
+      - offset: pagination offset (default: 0)
+    """
+    permission_classes = [AdminRequiredPermission]
+
+    def get(self, request):
+        tx_type = request.query_params.get('type', 'all')
+        status_filter = request.query_params.get('status')
+        user_id = request.query_params.get('user_id')
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        limit = int(request.query_params.get('limit', 100))
+        offset = int(request.query_params.get('offset', 0))
+
+        # Base queryset
+        queryset = Transaction.objects.all().select_related('wallet', 'wallet__user', 'merchant', 'biller')
+
+        # Apply filters
+        if tx_type != 'all':
+            queryset = queryset.filter(transaction_type=tx_type)
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        if user_id:
+            queryset = queryset.filter(wallet__user_id=user_id)
+        if start_date:
+            queryset = queryset.filter(created_at__date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(created_at__date__lte=end_date)
+
+        # Get total count before pagination
+        total_count = queryset.count()
+
+        # Calculate totals
+        from django.db.models import Sum
+        totals = queryset.aggregate(
+            total_amount=Sum('amount')
+        )
+
+        # Apply pagination
+        queryset = queryset.order_by('-created_at')[offset:offset + limit]
+
+        # Build response
+        transactions = []
+        for tx in queryset:
+            tx_data = {
+                'id': tx.id,
+                'reference': tx.reference,
+                'type': tx.transaction_type,
+                'amount': str(tx.amount),
+                'currency': tx.wallet.currency if tx.wallet else None,
+                'status': tx.status,
+                'description': tx.description,
+                'created_at': tx.created_at.isoformat(),
+                'user': {
+                    'id': tx.wallet.user.id if tx.wallet and tx.wallet.user else None,
+                    'full_name': tx.wallet.user.full_name if tx.wallet and tx.wallet.user else None,
+                    'email': tx.wallet.user.email if tx.wallet and tx.wallet.user else None,
+                } if tx.wallet else None,
+                'wallet': {
+                    'id': tx.wallet.id if tx.wallet else None,
+                    'wallet_number': tx.wallet.wallet_number if tx.wallet else None,
+                },
+            }
+
+            # Add transfer details if applicable
+            if tx.transaction_type == 'transfer':
+                try:
+                    transfer = Transfer.objects.select_related(
+                        'sender_wallet__user', 'receiver_wallet__user'
+                    ).get(transaction=tx)
+                    tx_data['transfer_details'] = {
+                        'sender': {
+                            'wallet_number': transfer.sender_wallet.wallet_number if transfer.sender_wallet else None,
+                            'user_name': transfer.sender_wallet.user.full_name if transfer.sender_wallet and transfer.sender_wallet.user else None,
+                        },
+                        'receiver': {
+                            'wallet_number': transfer.receiver_wallet.wallet_number if transfer.receiver_wallet else None,
+                            'user_name': transfer.receiver_wallet.user.full_name if transfer.receiver_wallet and transfer.receiver_wallet.user else None,
+                        },
+                    }
+                except Transfer.DoesNotExist:
+                    tx_data['transfer_details'] = None
+
+            transactions.append(tx_data)
+
+        return Response({
+            'total_count': total_count,
+            'returned_count': len(transactions),
+            'total_amount': str(totals['total_amount'] or 0),
+            'offset': offset,
+            'limit': limit,
+            'transactions': transactions,
+        })
+
+
+class AdminTransactionSummaryView(APIView):
+    """
+    GET /api/admin/transactions/summary/
+    Admin endpoint to get transaction summary statistics.
+    Query params:
+      - start_date: YYYY-MM-DD (optional)
+      - end_date: YYYY-MM-DD (optional)
+    """
+    permission_classes = [AdminRequiredPermission]
+
+    def get(self, request):
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+
+        queryset = Transaction.objects.all()
+
+        if start_date:
+            queryset = queryset.filter(created_at__date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(created_at__date__lte=end_date)
+
+        from django.db.models import Count, Sum
+
+        # Summary by type
+        by_type = queryset.values('transaction_type').annotate(
+            count=Count('id'),
+            total_amount=Sum('amount')
+        ).order_by('transaction_type')
+
+        # Summary by status
+        by_status = queryset.values('status').annotate(
+            count=Count('id'),
+            total_amount=Sum('amount')
+        ).order_by('status')
+
+        # Daily summary (last 30 days by default)
+        from django.utils import timezone
+        from datetime import timedelta
+
+        if not start_date:
+            daily_queryset = queryset.filter(created_at__gte=timezone.now() - timedelta(days=30))
+        else:
+            daily_queryset = queryset
+
+        daily_summary = daily_queryset.values('created_at__date').annotate(
+            count=Count('id'),
+            total_amount=Sum('amount')
+        ).order_by('-created_at__date')[:30]
+
+        return Response({
+            'by_type': [
+                {
+                    'type': item['transaction_type'],
+                    'count': item['count'],
+                    'total_amount': str(item['total_amount'] or 0)
+                }
+                for item in by_type
+            ],
+            'by_status': [
+                {
+                    'status': item['status'],
+                    'count': item['count'],
+                    'total_amount': str(item['total_amount'] or 0)
+                }
+                for item in by_status
+            ],
+            'daily_summary': [
+                {
+                    'date': item['created_at__date'].isoformat(),
+                    'count': item['count'],
+                    'total_amount': str(item['total_amount'] or 0)
+                }
+                for item in daily_summary
+            ],
+        })
+
 
 class FraudDetectionViewSet(viewsets.ModelViewSet):
     queryset = FraudDetection.objects.all()
     serializer_class = FraudDetectionSerializer
+
+
+# ═════════════════════════════════════════
+#  PASSWORD RESET VIEWS (Resend API)
+# ═════════════════════════════════════════
+
+class PasswordResetRequestView(APIView):
+    """
+    POST /api/auth/password-reset/request/
+    Request password reset. Sends reset link via email.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email')
+
+        if not email:
+            return Response(
+                {'error': 'Email is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            # Don't reveal if email exists for security
+            return Response(
+                {'message': 'If an account exists with this email, a password reset link has been sent.'},
+                status=status.HTTP_200_OK
+            )
+
+        # Generate reset token
+        token = generate_reset_token()
+        user.password_reset_token = token
+        user.password_reset_sent_at = timezone.now()
+        user.save()
+
+        # Build reset URL
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')
+        reset_url = f"{frontend_url}/reset-password?token={token}"
+
+        # Send email via Resend
+        result = send_password_reset_email(user, reset_url)
+
+        if result['success']:
+            return Response(
+                {'message': 'If an account exists with this email, a password reset link has been sent.'},
+                status=status.HTTP_200_OK
+            )
+        else:
+            return Response(
+                {'error': 'Failed to send reset email. Please try again later.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class PasswordResetVerifyView(APIView):
+    """
+    POST /api/auth/password-reset/verify/
+    Verify reset token and set new password.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        token = request.data.get('token')
+        new_password = request.data.get('new_password')
+
+        if not token or not new_password:
+            return Response(
+                {'error': 'Token and new password are required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validate password length
+        if len(new_password) < 8:
+            return Response(
+                {'error': 'Password must be at least 8 characters long.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = User.objects.get(password_reset_token=token)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'Invalid or expired reset token.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check if token is expired (1 hour validity)
+        if user.password_reset_sent_at:
+            time_diff = timezone.now() - user.password_reset_sent_at
+            if time_diff.total_seconds() > 3600:  # 1 hour
+                return Response(
+                    {'error': 'Reset token has expired. Please request a new one.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # Set new password
+        user.set_password(new_password)
+        user.password_reset_token = None
+        user.password_reset_sent_at = None
+        user.save()
+
+        # Send confirmation email
+        send_password_reset_confirmation(user)
+
+        return Response(
+            {'message': 'Password has been reset successfully.'},
+            status=status.HTTP_200_OK
+        )
+
+
+class PasswordResetValidateTokenView(APIView):
+    """
+    GET /api/auth/password-reset/validate/?token=<token>
+    Validate if a reset token is still valid.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        token = request.query_params.get('token')
+
+        if not token:
+            return Response(
+                {'error': 'Token is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = User.objects.get(password_reset_token=token)
+        except User.DoesNotExist:
+            return Response(
+                {'valid': False, 'error': 'Invalid token.'},
+                status=status.HTTP_200_OK
+            )
+
+        # Check if token is expired
+        if user.password_reset_sent_at:
+            time_diff = timezone.now() - user.password_reset_sent_at
+            if time_diff.total_seconds() > 3600:  # 1 hour
+                return Response(
+                    {'valid': False, 'error': 'Token has expired.'},
+                    status=status.HTTP_200_OK
+                )
+
+        return Response(
+            {'valid': True, 'email': user.email},
+            status=status.HTTP_200_OK
+        )
+
+
+class NotificationListView(LoginRequiredMixin, View):
+    """GET /notifications/ — View all user notifications. Marks all as read on visit."""
+    login_url = '/login/'
+    template_name = 'wallet/notifications.html'
+
+    def get(self, request):
+        # Mark all unread notifications as read immediately
+        Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
+
+        notifications = (
+            Notification.objects
+            .filter(user=request.user)
+            .select_related('transaction')
+            .order_by('-created_at')
+        )
+
+        # Unread count is now 0 since we just marked all as read
+        unread_count = 0
+
+        # Pagination (optional - show 20 per page)
+        from django.core.paginator import Paginator
+        paginator = Paginator(notifications, 20)
+        page_number = request.GET.get('page')
+        page_obj = paginator.get_page(page_number)
+
+        ctx = {
+            'notifications': page_obj,
+            'unread_count': unread_count,
+            'active_page': 'notifications',
+        }
+        return render(request, self.template_name, ctx)
+
+
+# ═════════════════════════════════════════
+#  BAKONG PAYMENT VIEWS
+# ═════════════════════════════════════════
+
+import base64
+import json
+import hashlib
+import hmac
+from bakong_khqr import KHQR
+from urllib import error as urlerror
+from urllib import request as urlrequest
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+
+
+class BakongTopupView(LoginRequiredMixin, View):
+    """GET/POST /bakong-topup/ — Generate Bakong QR for wallet top-up."""
+    login_url = '/login/'
+    template_name = 'wallet/bakong_topup.html'
+
+    def get(self, request):
+        wallets = Wallet.objects.filter(user=request.user)
+        wallet = wallets.first()
+        
+        if not wallets.exists():
+            messages.error(request, 'You do not have a wallet yet.')
+            return redirect('dashboard')
+
+        # Get pending Bakong payments for this user
+        pending_payments = BakongPayment.objects.filter(
+            wallet__user=request.user,
+            status='pending',
+            expires_at__gt=timezone.now()
+        ).order_by('-created_at')[:5]
+
+        ctx = {
+            'wallets': wallets,
+            'wallet': wallet,
+            'active_page': 'bakong_topup',
+            'pending_payments': pending_payments,
+            'bakong_merchant_name': settings.BAKONG_MERCHANT_NAME,
+            'bakong_account_id': settings.BAKONG_ACCOUNT_ID,
+        }
+        return render(request, self.template_name, ctx)
+
+    def post(self, request):
+        wallets = Wallet.objects.filter(user=request.user)
+        
+        if not wallets.exists():
+            messages.error(request, 'You do not have a wallet yet.')
+            return redirect('dashboard')
+
+        wallet_id = request.POST.get('wallet')
+        amount = request.POST.get('amount')
+        currency = request.POST.get('currency', 'KHR')
+
+        try:
+            wallet = wallets.get(id=wallet_id)
+        except Wallet.DoesNotExist:
+            messages.error(request, 'Wallet not found.')
+            return redirect('bakong_topup')
+
+        try:
+            amount = Decimal(amount)
+            if amount <= 0:
+                raise ValueError
+            # KHQR only permits whole-number KHR amounts.  Do not silently
+            # truncate a value such as 1000.50 to 1000 in the QR payload.
+            if currency == 'KHR' and amount != amount.to_integral_value():
+                raise ValueError
+        except (ValueError, TypeError):
+            messages.error(request, 'Invalid amount. KHR amounts must be whole numbers.')
+            return redirect('bakong_topup')
+
+        # Generate unique reference number
+        reference_number = f"BKN-{uuid.uuid4().hex[:12].upper()}"
+
+        # Create Bakong payment record
+        expires_at = timezone.now() + timezone.timedelta(minutes=10)
+        bakong_payment = BakongPayment.objects.create(
+            wallet=wallet,
+            amount=amount,
+            currency=currency,
+            reference_number=reference_number,
+            expires_at=expires_at,
+        )
+
+        # Generate Bakong QR data (KHQR format).
+        try:
+            qr_data = self._generate_bakong_qr(bakong_payment)
+        except ValueError as exc:
+            bakong_payment.delete()
+            messages.error(request, str(exc))
+            return redirect('bakong_topup')
+        
+        # Bakong verifies the MD5 of the *exact* KHQR string it received.
+        # Store it with the payment so status polling can use the official API.
+        bakong_payment.qr_code = qr_data
+        bakong_payment.bakong_md5 = KHQR().generate_md5(qr_data)
+        bakong_payment.save(update_fields=['qr_code', 'bakong_md5', 'updated_at'])
+
+        messages.info(request, f'Please scan the QR code with Bakong app to complete payment. Reference: {reference_number}')
+        
+        return redirect('bakong_qr_display', payment_id=bakong_payment.id)
+
+    def _generate_bakong_qr(self, payment):
+        """Generate dynamic KHQR through the Python KHQR SDK."""
+        bakong_account = settings.BAKONG_ACCOUNT_ID
+        if not bakong_account:
+            raise ValueError('BAKONG_ACCOUNT_ID must be configured before generating a QR code.')
+        if '@' not in bakong_account or len(bakong_account) > 32:
+            raise ValueError('BAKONG_ACCOUNT_ID must be a valid Bakong ID (for example name@bkrt).')
+
+        merchant_name = settings.BAKONG_MERCHANT_NAME or 'NexusPay'
+        merchant_city = settings.BAKONG_MERCHANT_CITY or 'Phnom Penh'
+        return KHQR().create_qr(
+            account_id=bakong_account,
+            merchant_name=merchant_name,
+            merchant_city=merchant_city,
+            amount=float(payment.amount),
+            currency=payment.currency,
+            bill_number=payment.reference_number or str(payment.id),
+            static=False,
+            # The SDK's minimum QR expiry is one day. The application still
+            # expires and rejects this wallet top-up after ten minutes.
+            expiration=1,
+        )
+
+
+class BakongQRDisplayView(LoginRequiredMixin, View):
+    """GET /bakong-qr/<payment_id>/ — Display QR code for scanning."""
+    login_url = '/login/'
+    template_name = 'wallet/bakong_qr_display.html'
+
+    def get(self, request, payment_id):
+        try:
+            payment = BakongPayment.objects.get(
+                id=payment_id,
+                wallet__user=request.user
+            )
+        except BakongPayment.DoesNotExist:
+            messages.error(request, 'Payment not found.')
+            return redirect('bakong_topup')
+
+        if payment.status == 'completed':
+            messages.success(request, 'Payment already completed!')
+            return redirect('dashboard')
+        
+        if payment.status == 'expired' or payment.expires_at < timezone.now():
+            payment.status = 'expired'
+            payment.save()
+            messages.error(request, 'Payment has expired. Please create a new one.')
+            return redirect('bakong_topup')
+
+        ctx = {
+            'payment': payment,
+            'qr_data': payment.qr_code or '',
+            # Equivalent to `$md5` passed from PaymentController to checkout.
+            # It is safe to send to the browser; the Bakong access token stays
+            # on this server.
+            'bakong_md5': payment.bakong_md5 or '',
+            'active_page': 'bakong_topup',
+        }
+        return render(request, self.template_name, ctx)
+
+
+class BakongVerifyTransactionAPI(APIView):
+    """POST /api/bakong/verify/ — Django equivalent of verifyTransaction()."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        md5 = request.data.get('md5', '')
+        if not isinstance(md5, str) or len(md5) != 32:
+            return Response({'error': 'A valid Bakong MD5 is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            payment = BakongPayment.objects.get(
+                bakong_md5=md5,
+                wallet__user=request.user,
+            )
+        except BakongPayment.DoesNotExist:
+            return Response({'error': 'Payment not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if payment.status == 'pending' and payment.expires_at < timezone.now():
+            payment.status = 'expired'
+            payment.save(update_fields=['status', 'updated_at'])
+
+        if payment.status == 'pending':
+            try:
+                result = BakongPaymentStatusAPI._check_transaction_by_md5(md5)
+            except BakongAPIError as exc:
+                return Response({'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+            if BakongPaymentStatusAPI._is_successful_transaction(result, payment):
+                BakongPaymentStatusAPI._complete_payment(payment, result)
+                payment.refresh_from_db()
+        else:
+            result = {'responseCode': 0 if payment.status == 'completed' else 1, 'data': None}
+
+        # Keep the Bakong response shape used by the Laravel controller and
+        # add our local state so the browser knows whether to finish or retry.
+        result['paymentStatus'] = payment.status
+        return Response(result)
+
+
+class BakongPaymentStatusAPI(APIView):
+    """GET /api/bakong/payment/<payment_id>/status/ — Check payment status."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, payment_id):
+        try:
+            payment = BakongPayment.objects.get(
+                id=payment_id,
+                wallet__user=request.user
+            )
+        except BakongPayment.DoesNotExist:
+            return Response(
+                {'error': 'Payment not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check if expired
+        if payment.status == 'pending' and payment.expires_at < timezone.now():
+            payment.status = 'expired'
+            payment.save(update_fields=['status', 'updated_at'])
+
+        # Match PaymentController::verifyTransaction(): check the MD5 produced
+        # while generating the QR with Bakong's transaction-status API.
+        if payment.status == 'pending':
+            try:
+                result = self._check_transaction_by_md5(payment.bakong_md5)
+                if self._is_successful_transaction(result, payment):
+                    self._complete_payment(payment, result)
+                    payment.refresh_from_db()
+            except BakongAPIError as exc:
+                # A temporary API outage must not mark a pending payment failed.
+                return Response({
+                    'payment_id': payment.id,
+                    'status': payment.status,
+                    'verification_error': str(exc),
+                }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        return Response({
+            'payment_id': payment.id,
+            'reference_number': payment.reference_number,
+            'amount': str(payment.amount),
+            'currency': payment.currency,
+            'status': payment.status,
+            'created_at': payment.created_at.isoformat(),
+            'expires_at': payment.expires_at.isoformat(),
+        })
+
+    @staticmethod
+    def _check_transaction_by_md5(md5):
+        if not md5:
+            raise BakongAPIError('This payment has no Bakong MD5 value.')
+        if not settings.BAKONG_TOKEN:
+            raise BakongAPIError('BAKONG_TOKEN is not configured.')
+
+        endpoint = settings.BAKONG_API_URL.rstrip('/') + '/v1/check_transaction_by_md5'
+        body = json.dumps({'md5': md5}).encode('utf-8')
+        request = urlrequest.Request(
+            endpoint,
+            data=body,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {settings.BAKONG_TOKEN}',
+            },
+            method='POST',
+        )
+        try:
+            with urlrequest.urlopen(request, timeout=10) as response:
+                payload = json.loads(response.read().decode('utf-8'))
+        except (urlerror.URLError, urlerror.HTTPError, TimeoutError, json.JSONDecodeError) as exc:
+            raise BakongAPIError('Unable to verify payment with Bakong.') from exc
+        if not isinstance(payload, dict):
+            raise BakongAPIError('Bakong returned an invalid verification response.')
+        return payload
+
+    @staticmethod
+    def _is_successful_transaction(result, payment):
+        """Accept only a successful response whose amount/currency match the QR."""
+        if str(result.get('responseCode')) != '0' or not isinstance(result.get('data'), dict):
+            return False
+        data = result['data']
+        received_amount = data.get('amount', data.get('transactionAmount'))
+        received_currency = data.get('currency', data.get('transactionCurrency'))
+        if received_amount is not None and Decimal(str(received_amount)) != payment.amount:
+            return False
+        if received_currency and str(received_currency).upper() not in {
+            payment.currency.upper(), '116' if payment.currency == 'KHR' else '840'
+        }:
+            return False
+        return True
+
+    @staticmethod
+    def _complete_payment(payment, payload):
+        """Credit exactly once; both API polling and webhook delivery use this."""
+        with db_transaction.atomic():
+            payment = BakongPayment.objects.select_for_update().select_related('wallet__user').get(pk=payment.pk)
+            if payment.status == 'completed':
+                return
+            if payment.status != 'pending':
+                return
+            data = payload.get('data', payload)
+            payment.status = 'completed'
+            payment.bakong_tx_id = data.get('transactionId', data.get('transaction_id', payment.bakong_tx_id))
+            payment.webhook_payload = payload
+            payment.save(update_fields=['status', 'bakong_tx_id', 'webhook_payload', 'updated_at'])
+
+            wallet = payment.wallet
+            wallet.balance += payment.amount
+            wallet.save()
+            tx = Transaction.objects.create(
+                wallet=wallet, transaction_type='topup', amount=payment.amount,
+                status='completed', description=f'Topup via Bakong (Ref: {payment.reference_number})',
+                reference=f'TOP-BKN-{uuid.uuid4().hex[:8].upper()}',
+            )
+            Topup.objects.create(transaction=tx, payment_method='bakong', provider='Bakong')
+            NotificationService.notify_topup_completed(user=wallet.user, amount=payment.amount,
+                currency=wallet.currency, transaction=tx, payment_method='Bakong')
+            Notification.objects.create(user=wallet.user, transaction=tx, notification_type='topup',
+                title='Bakong Topup Successful',
+                message=f'Your wallet has been credited with {payment.amount} {wallet.currency} via Bakong.')
+
+
+class BakongAPIError(Exception):
+    """The Bakong verification service could not provide a usable response."""
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class BakongWebhookView(View):
+    """POST /webhooks/bakong/ — Receive Bakong payment notifications."""
+    
+    def post(self, request):
+        """Handle Bakong webhook callback."""
+        try:
+            payload = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+        # Verify webhook signature if provided
+        # In production, verify the signature using BAKONG_TOKEN
+        signature = request.headers.get('X-Bakong-Signature', '')
+        expected_signature = self._generate_signature(request.body)
+        
+        # For development, we can skip signature verification
+        # In production: if signature != expected_signature: return JsonResponse({'error': 'Invalid signature'}, status=401)
+
+        # Extract payment details from payload
+        reference_number = payload.get('reference')
+        bakong_tx_id = payload.get('transactionId')
+        status_code = payload.get('status', '').lower()
+        amount = payload.get('amount')
+        currency = payload.get('currency', 'KHR')
+
+        if not reference_number:
+            return JsonResponse({'error': 'Reference number required'}, status=400)
+
+        try:
+            payment = BakongPayment.objects.get(reference_number=reference_number)
+        except BakongPayment.DoesNotExist:
+            return JsonResponse({'error': 'Payment not found'}, status=404)
+
+        # Update payment status. The shared completion method is idempotent, so
+        # a webhook and MD5 polling cannot credit the same payment twice.
+        if status_code == 'success' or status_code == 'completed':
+            BakongPaymentStatusAPI._complete_payment(payment, payload)
+
+        elif status_code == 'failed':
+            payment.status = 'failed'
+            payment.webhook_payload = payload
+            payment.save()
+
+        return JsonResponse({'status': 'ok'})
+
+    def _generate_signature(self, body):
+        """Generate HMAC signature for webhook verification."""
+        if not settings.BAKONG_TOKEN:
+            return ''
+        secret = settings.BAKONG_TOKEN.encode('utf-8')
+        return hmac.new(secret, body, hashlib.sha256).hexdigest()
+
+
+class BakongPaymentHistoryView(LoginRequiredMixin, View):
+    """GET /bakong-history/ — View Bakong payment history."""
+    login_url = '/login/'
+    template_name = 'wallet/bakong_history.html'
+
+    def get(self, request):
+        payments = BakongPayment.objects.filter(
+            wallet__user=request.user
+        ).order_by('-created_at')
+
+        ctx = {
+            'payments': payments,
+            'active_page': 'bakong_history',
+        }
+        return render(request, self.template_name, ctx)

@@ -1,0 +1,220 @@
+{% extends 'wallet/base.html' %}
+{% block title %}Transactions - NexusPay{% endblock %}
+{% block page_title %}Transactions{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto space-y-6">
+  <section class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+    <div class="lg:col-span-2 bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+      <p class="text-xs font-semibold uppercase tracking-widest text-slate-400">Wallet</p>
+      {% if wallet %}
+      <div class="mt-3 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+        <div>
+          <h2 class="text-3xl font-extrabold text-slate-900">{{ wallet.currency }} {{ wallet.balance }}</h2>
+          <p class="mt-2 text-sm font-mono text-slate-500">{{ wallet.wallet_number }}</p>
+        </div>
+        <span class="inline-flex w-fit rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">{{ wallet.status|capfirst }}</span>
+      </div>
+      {% else %}
+      <div class="mt-3">
+        <h2 class="text-3xl font-extrabold text-slate-900">No wallet</h2>
+        <p class="mt-2 text-sm text-slate-500">Create a wallet before viewing transaction history.</p>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="bg-slate-900 rounded-2xl p-6 text-white shadow-sm">
+      <p class="text-xs font-semibold uppercase tracking-widest text-slate-400">Quick Actions</p>
+      <div class="mt-5 grid grid-cols-2 gap-3">
+        <a href="{% url 'send' %}" class="flex items-center justify-center gap-2 rounded-xl bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/20">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          Send
+        </a>
+        <a href="{% url 'topup' %}" class="flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-600">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+          Top Up
+        </a>
+        <a href="{% url 'bill_payment' %}" class="flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-3 text-sm font-bold text-white transition hover:bg-amber-600">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+          </svg>
+          Pay Bill
+        </a>
+        <a href="{% url 'reports' %}" class="flex items-center justify-center gap-2 rounded-xl bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/20">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+          </svg>
+          Reports
+        </a>
+        {% if wallet %}
+        <button type="button" id="openStatementModal" class="col-span-2 flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+          Download Account Statement
+        </button>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+
+  <section class="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-6 py-5 border-b border-slate-100">
+      <div>
+        <h2 class="text-lg font-extrabold text-slate-900">All Activity</h2>
+        <p class="mt-1 text-sm text-slate-500">Top-ups, sent transfers, and received transfers for this wallet.</p>
+      </div>
+    </div>
+
+    <div class="divide-y divide-slate-100">
+      {% for tx in transactions %}
+      <article class="flex flex-col gap-4 px-6 py-5 transition hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex items-start gap-4">
+          <div class="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl
+            {% if tx.transaction_type == 'topup' %}bg-emerald-50
+            {% elif tx.transaction_type == 'bill_payment' %}bg-amber-50
+            {% else %}bg-red-50{% endif %}">
+            {% if tx.transaction_type == 'topup' %}
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            {% elif tx.transaction_type == 'bill_payment' %}
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+            </svg>
+            {% else %}
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            {% endif %}
+          </div>
+          <div>
+            <h3 class="text-sm font-bold capitalize text-slate-800">
+              {% if tx.transaction_type == 'bill_payment' %}
+                {{ tx.billpayment.bill_type|default:'Bill'|capfirst }} Bill
+              {% else %}
+                {{ tx.transaction_type }}
+              {% endif %}
+            </h3>
+            <p class="mt-1 text-sm text-slate-500">{{ tx.description|default:'No description' }}</p>
+            <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+              <span>{{ tx.created_at|date:"M d, Y g:i A" }}</span>
+              {% if tx.reference %}
+              <span class="font-mono">{{ tx.reference }}</span>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        <div class="sm:text-right">
+          <p class="text-base font-extrabold
+            {% if tx.transaction_type == 'topup' %}text-emerald-600
+            {% elif tx.transaction_type == 'bill_payment' %}text-amber-600
+            {% else %}text-red-500{% endif %}">
+            {% if tx.transaction_type == 'topup' %}+{% else %}-{% endif %}{{ wallet.currency|default:'KHR' }} {{ tx.amount }}
+          </p>
+          <span class="mt-2 inline-flex rounded-full px-2.5 py-1 text-xs font-bold {% if tx.status == 'completed' %}bg-emerald-50 text-emerald-700{% elif tx.status == 'failed' %}bg-red-50 text-red-700{% else %}bg-amber-50 text-amber-700{% endif %}">
+            {{ tx.status|capfirst }}
+          </span>
+        </div>
+      </article>
+      {% endfor %}
+
+      {% for transfer in received_transfers %}
+      <article class="flex flex-col gap-4 px-6 py-5 transition hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex items-start gap-4">
+          <div class="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-emerald-50">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/></svg>
+          </div>
+          <div>
+            <h3 class="text-sm font-bold text-slate-800">Received from {{ transfer.sender_wallet.user.full_name }}</h3>
+            <p class="mt-1 text-sm text-slate-500">{{ transfer.transaction.description|default:'Incoming transfer' }}</p>
+            <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+              <span>{{ transfer.created_at|date:"M d, Y g:i A" }}</span>
+              {% if transfer.transaction.reference %}
+              <span class="font-mono">{{ transfer.transaction.reference }}</span>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        <div class="sm:text-right">
+          <p class="text-base font-extrabold text-emerald-600">+{{ wallet.currency|default:'KHR' }} {{ transfer.transaction.amount }}</p>
+          <span class="mt-2 inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700">{{ transfer.transaction.status|capfirst }}</span>
+        </div>
+      </article>
+      {% endfor %}
+
+      {% if not transactions and not received_transfers %}
+      <div class="flex flex-col items-center justify-center px-6 py-20 text-center">
+        <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-50">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>
+        </div>
+        <h3 class="mt-4 text-base font-bold text-slate-800">No transactions yet</h3>
+        <p class="mt-1 text-sm text-slate-500">Top up your wallet or send money to start building history.</p>
+        <a href="{% url 'topup' %}" class="mt-5 inline-flex items-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700">Top Up Wallet</a>
+      </div>
+      {% endif %}
+    </div>
+  </section>
+</div>
+
+{% if wallet %}
+<div id="statementModal" class="fixed inset-0 z-[70] hidden items-end justify-center bg-slate-950/50 p-4 sm:items-center" role="dialog" aria-modal="true" aria-labelledby="statementModalTitle">
+  <div class="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <h2 id="statementModalTitle" class="text-xl font-extrabold text-slate-900">Download Account Statement</h2>
+        <p class="mt-2 text-sm leading-6 text-slate-500">With account statement you can see a summary of all transactions made through this account during the selected period.</p>
+      </div>
+      <button type="button" id="closeStatementModal" class="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" aria-label="Close">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <form id="statementForm" class="mt-6">
+      <fieldset class="space-y-2">
+        <legend class="sr-only">Statement period</legend>
+        <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50">
+          <input type="radio" name="period" value="this_month" class="h-4 w-4 border-slate-300 text-blue-600 focus:ring-blue-500">
+          <span class="text-sm font-semibold text-slate-700">This month</span>
+        </label>
+        <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50">
+          <input type="radio" name="period" value="1_month" class="h-4 w-4 border-slate-300 text-blue-600 focus:ring-blue-500">
+          <span class="text-sm font-semibold text-slate-700">Last 1 month</span>
+        </label>
+        <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50">
+          <input type="radio" name="period" value="3_months" class="h-4 w-4 border-slate-300 text-blue-600 focus:ring-blue-500">
+          <span class="text-sm font-semibold text-slate-700">Last 3 months</span>
+        </label>
+        <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50">
+          <input type="radio" name="period" value="6_months" class="h-4 w-4 border-slate-300 text-blue-600 focus:ring-blue-500">
+          <span class="text-sm font-semibold text-slate-700">Last 6 months</span>
+        </label>
+      </fieldset>
+      <div class="mt-6 flex items-center justify-end gap-3 border-t border-slate-100 pt-5">
+        <button type="button" id="cancelStatementModal" class="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-100">CANCEL</button>
+        <button type="submit" id="downloadStatementButton" disabled class="inline-flex min-w-36 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300">
+          <span>DOWNLOAD PDF</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+  (() => {
+    const modal = document.getElementById('statementModal');
+    const open = document.getElementById('openStatementModal');
+    const show = () => { modal.classList.remove('hidden'); modal.classList.add('flex'); };
+    const close = () => { modal.classList.add('hidden'); modal.classList.remove('flex'); };
+    const form = document.getElementById('statementForm');
+    const submit = document.getElementById('downloadStatementButton');
+    open.addEventListener('click', show);
+    document.getElementById('closeStatementModal').addEventListener('click', close);
+    document.getElementById('cancelStatementModal').addEventListener('click', close);
+    modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+    document.addEventListener('keydown', (event) => { if (event.key === 'Escape') close(); });
+    form.querySelectorAll('input[name="period"]').forEach((input) => input.addEventListener('change', () => { submit.disabled = false; }));
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const period = form.querySelector('input[name="period"]:checked').value;
+      submit.disabled = true;
+      submit.innerHTML = '<svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg><span>GENERATING...</span>';
+      window.location.assign('{% url "account_statement_download" %}?period=' + encodeURIComponent(period) + '&wallet_id={{ wallet.id }}');
+      window.setTimeout(() => { submit.disabled = false; submit.innerHTML = '<span>DOWNLOAD PDF</span>'; }, 1800);
+    });
+  })();
+</script>
+{% endif %}
+{% endblock %}

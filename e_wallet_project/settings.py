@@ -34,6 +34,22 @@ DEBUG = True
 
 ALLOWED_HOSTS = ['*']
 
+# HTTPS development tunnel used to test the app from mobile devices.
+CSRF_TRUSTED_ORIGINS = [
+    'https://sector-ritzy-degrease.ngrok-free.dev',
+    'http://127.0.0.1',
+    'http://localhost',
+]
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# CSRF Cookie settings
+CSRF_COOKIE_SECURE = False  # Set to True in production with HTTPS
+CSRF_COOKIE_HTTPONLY = False  # Must be False for JavaScript to access it
+CSRF_COOKIE_SAMESITE = 'Lax'
+CSRF_USE_SESSIONS = False  # Use cookie-based CSRF tokens
+SESSION_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_SECURE = False  # Set to True in production with HTTPS
+
 
 # Application definition
 
@@ -46,6 +62,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
     'wallet',
 ]
 
@@ -53,7 +70,8 @@ AUTH_USER_MODEL = 'wallet.User'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'wallet.authentication.CookieJWTAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
@@ -71,6 +89,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'wallet.authentication.JWTSessionMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -80,13 +99,14 @@ ROOT_URLCONF = 'e_wallet_project.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'wallet.context_processors.notification_counts',
             ],
         },
     },
@@ -131,7 +151,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Phnom_Penh'
 
 USE_I18N = True
 
@@ -142,3 +162,42 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+# ── Auth redirect settings ─────────────────────────────────────────
+LOGIN_URL = '/login/'
+LOGIN_REDIRECT_URL = '/'
+LOGOUT_REDIRECT_URL = '/login/'
+
+# ── Resend Email Configuration ───────────────────────────────────────
+# Get your API key from: https://resend.com/api-keys
+RESEND_API_KEY = os.getenv('RESEND_API_KEY', '')
+RESEND_FROM_EMAIL = os.getenv('RESEND_FROM_EMAIL', 'onboarding@resend.dev')
+
+# Frontend URL for password reset links
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+
+# ── Default primary key field type ────────────────────────────────
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# ── Cloudinary Configuration ──────────────────────────────────────
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
+
+cloudinary.config(
+    cloud_name=os.getenv('CLOUDINARY_KEY_NAME', ''),
+    api_key=os.getenv('CLOUDINARY_API_KEY', ''),
+    api_secret=os.getenv('CLOUDINARY_API_SECRET', ''),
+    secure=True
+)
+
+# ── Bakong Payment Configuration ───────────────────────────────────
+BAKONG_TOKEN = os.getenv('BAKONG_TOKEN', '')
+BAKONG_ACCOUNT_ID = os.getenv('BAKONG_ACCOUNT_ID', '')
+BAKONG_MERCHANT_NAME = os.getenv('BAKONG_MERCHANT_NAME', '')
+BAKONG_MERCHANT_CITY = os.getenv('BAKONG_MERCHANT_CITY', '')
+# Bakong's production API base URL.  Set this to
+# https://sit-api-bakong.nbc.gov.kh when using a SIT token.
+BAKONG_API_URL = os.getenv('BAKONG_API_URL', 'https://api-bakong.nbc.gov.kh')

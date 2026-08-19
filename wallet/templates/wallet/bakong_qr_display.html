@@ -1,0 +1,208 @@
+{% extends 'wallet/base.html' %}
+{% block title %}Scan KHQR - NexusPay{% endblock %}
+{% block page_title %}Scan KHQR{% endblock %}
+
+{% block content %}
+<div class="max-w-md mx-auto">
+  <div class="bg-white rounded-2xl border border-slate-100 shadow-lg overflow-hidden">
+    <div class="bg-gradient-to-r from-blue-600 to-blue-700 p-6 text-white text-center">
+      <h2 class="text-xl font-bold">Scan KHQR</h2>
+      <p class="text-blue-100 text-sm mt-1">Approve this wallet top-up in your Bakong app</p>
+    </div>
+
+    <div class="p-8 text-center">
+      <div class="mb-6">
+        <p class="font-bold text-slate-800">Wallet Top-up</p>
+        <p class="mt-1 text-3xl font-extrabold text-slate-800">{{ payment.amount }} <span class="text-xl text-slate-500">{{ payment.currency }}</span></p>
+      </div>
+
+      <div class="inline-block mb-6">
+        <div id="qrContainer" class="p-4 bg-white border-2 border-slate-200 rounded-xl">
+          <div id="qrcode"></div>
+        </div>
+      </div>
+      
+      <div id="statusBadge" class="inline-block px-4 py-1 bg-amber-100 text-amber-700 text-sm font-bold rounded-full border border-amber-200 mb-6">
+        Waiting for payment...
+      </div>
+
+      <div class="rounded-xl bg-slate-50 p-5">
+        <p id="countdown" class="text-4xl font-extrabold tabular-nums text-slate-800">10:00</p>
+        <p class="mt-1 text-sm text-slate-500">Expire in <span id="seconds">600</span>s</p>
+      </div>
+
+      <div class="mt-5 space-y-3 text-left bg-slate-50 rounded-xl p-4">
+        <div class="flex justify-between">
+          <span class="text-sm text-slate-500">Reference</span>
+          <span class="text-sm font-mono text-slate-700">{{ payment.reference_number }}</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-sm text-slate-500">Wallet</span>
+          <span class="text-sm font-mono text-slate-700">{{ payment.wallet.wallet_number|slice:":8" }}...</span>
+        </div>
+      </div>
+
+      <div class="mt-6 text-sm text-slate-500">
+        <p>Open <strong>Bakong</strong>, scan this QR, then confirm the payment. This page verifies it automatically.</p>
+      </div>
+
+      <!-- Actions -->
+      <div class="mt-6 flex gap-3">
+        <button onclick="window.print()" 
+          class="flex-1 inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 transition">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/>
+            <path d="M6 14h12v8H6z"/>
+          </svg>
+          Print
+        </button>
+        <a href="{% url 'bakong_topup' %}" 
+          class="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-slate-100 px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-200 transition">
+          Back
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Success Modal (Hidden by default) -->
+  <div id="successModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
+    <div class="bg-white rounded-2xl p-8 text-center max-w-sm w-full shadow-2xl">
+      <div class="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-10 h-10 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+          <polyline points="20 6 9 17 4 12"/>
+        </svg>
+      </div>
+      <h3 class="text-2xl font-bold text-slate-800 mb-2">Payment Successful!</h3>
+      <p class="text-slate-500 mb-6">Your wallet has been credited with {{ payment.amount }} {{ payment.currency }}</p>
+      <a href="{% url 'dashboard' %}" 
+        class="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-6 py-4 text-sm font-extrabold text-white hover:bg-emerald-700 transition">
+        Go to Dashboard
+      </a>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+(function() {
+  // Generate QR Code
+  const qrData = "{{ qr_data|escapejs }}";
+  const bakongMd5 = "{{ bakong_md5|escapejs }}";
+  const verifyUrl = "{% url 'bakong-verify-transaction' %}";
+  const csrfToken = "{{ csrf_token }}";
+  const qrContainer = document.getElementById('qrcode');
+  
+  if (!qrData || qrData === 'null' || qrData === '') {
+    qrContainer.innerHTML = '<p class="text-red-500 text-sm">Error: QR code data not available</p>';
+    console.error('QR data is empty or null');
+    return;
+  }
+  
+  console.log('QR Data length:', qrData.length);
+  console.log('QR Data:', qrData);
+  
+  try {
+    new QRCode(qrContainer, {
+      text: qrData,
+      width: 256,
+      height: 256,
+      colorDark: '#000000',
+      colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.H
+    });
+  } catch (e) {
+    console.error('QR Code generation error:', e);
+    qrContainer.innerHTML = '<p class="text-red-500 text-sm">Error generating QR code</p>';
+  }
+
+  // Countdown timer
+  const expiresAt = new Date('{{ payment.expires_at|date:"c" }}');
+  const countdownEl = document.getElementById('countdown');
+  const secondsEl = document.getElementById('seconds');
+  const statusBadge = document.getElementById('statusBadge');
+  const successModal = document.getElementById('successModal');
+  
+  function updateCountdown() {
+    const now = new Date();
+    const diff = expiresAt - now;
+    
+    if (diff <= 0) {
+      countdownEl.textContent = 'Expired';
+      secondsEl.textContent = '0';
+      countdownEl.classList.add('text-red-600');
+      statusBadge.textContent = 'Expired';
+      statusBadge.className = 'absolute -bottom-3 left-1/2 transform -translate-x-1/2 px-4 py-1 bg-red-100 text-red-700 text-sm font-bold rounded-full border border-red-200';
+      return false;
+    }
+    
+    const minutes = Math.floor(diff / 60000);
+    const seconds = Math.floor((diff % 60000) / 1000);
+    countdownEl.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    secondsEl.textContent = Math.ceil(diff / 1000);
+    return true;
+  }
+  
+  // Poll for payment status
+  let pollCount = 0;
+  // Bakong Open API permits 100 requests per day. Checking once per 10
+  // seconds keeps this QR's complete 10-minute lifetime to 60 requests.
+  const pollIntervalMs = 10000;
+  const maxPolls = 60;
+  
+  async function checkPaymentStatus() {
+    try {
+      // Same concept as Laravel's verifyTransaction(): send the QR MD5 to
+      // our server, which checks it with Bakong using the private API token.
+      const response = await fetch(verifyUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify({ md5: bakongMd5 })
+      });
+      const data = await response.json();
+      
+      if (data.responseCode === 0 && data.paymentStatus === 'completed') {
+        // Show success modal
+        successModal.classList.remove('hidden');
+        statusBadge.textContent = 'Completed';
+        statusBadge.className = 'absolute -bottom-3 left-1/2 transform -translate-x-1/2 px-4 py-1 bg-emerald-100 text-emerald-700 text-sm font-bold rounded-full border border-emerald-200';
+        return;
+      } else if (data.paymentStatus === 'failed') {
+        statusBadge.textContent = 'Failed';
+        statusBadge.className = 'absolute -bottom-3 left-1/2 transform -translate-x-1/2 px-4 py-1 bg-red-100 text-red-700 text-sm font-bold rounded-full border border-red-200';
+        return;
+      } else if (data.paymentStatus === 'expired') {
+        statusBadge.textContent = 'Expired';
+        statusBadge.className = 'absolute -bottom-3 left-1/2 transform -translate-x-1/2 px-4 py-1 bg-red-100 text-red-700 text-sm font-bold rounded-full border border-red-200';
+        return;
+      }
+      
+      // Continue polling
+      pollCount++;
+      if (pollCount < maxPolls && updateCountdown()) {
+        setTimeout(checkPaymentStatus, pollIntervalMs);
+      }
+    } catch (error) {
+      console.error('Error checking payment status:', error);
+      pollCount++;
+      if (pollCount < maxPolls) {
+        setTimeout(checkPaymentStatus, pollIntervalMs);
+      }
+    }
+  }
+  
+  // Start countdown and polling
+  updateCountdown();
+  const countdownInterval = setInterval(() => {
+    if (!updateCountdown()) {
+      clearInterval(countdownInterval);
+    }
+  }, 1000);
+  
+  // Start polling after the first interval.
+  setTimeout(checkPaymentStatus, pollIntervalMs);
+})();
+</script>
+{% endblock %}

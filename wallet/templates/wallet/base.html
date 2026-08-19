@@ -1,45 +1,733 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="h-full">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NextGen E-Wallet</title>
-    <!-- Bootstrap CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Phosphor Icons for modern minimalist icons -->
-    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}NexusPay{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'sans-serif'] },
+          colors: {
+            brand: { DEFAULT: '#2563eb', dark: '#1d4ed8', light: '#3b82f6' }
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  {% if request.user.is_authenticated %}
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
+  {% endif %}
+  <style>
+    #page-loader {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: grid;
+      place-items: center;
+      color: #0f172a;
+      opacity: 1;
+      visibility: visible;
+      transition: opacity 250ms ease, visibility 250ms ease;
+    }
+    #page-loader.is-hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .loader-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.25rem;
+      min-width: 13rem;
+      padding: 2rem 2.5rem;
+      border: 1px solid #e2e8f0;
+      border-radius: 1.5rem;
+      background: #fff;
+      box-shadow: 0 1.25rem 3rem rgba(15, 23, 42, 0.18);
+    }
+    .loader-mark {
+      position: relative;
+      display: grid;
+      width: 5.5rem;
+      height: 5.5rem;
+      place-items: center;
+    }
+    .loader-wallet {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      width: 3.5rem;
+      height: 3.5rem;
+      place-items: center;
+      border: 1px solid rgba(147, 197, 253, 0.35);
+      border-radius: 1.1rem;
+      background: linear-gradient(145deg, #3b82f6, #1d4ed8);
+      color: #fff;
+      animation: loader-float 1.8s ease-in-out infinite;
+    }
+    .loader-orbit {
+      position: absolute;
+      inset: 0;
+      border: 1px solid rgba(96, 165, 250, 0.28);
+      border-radius: 50%;
+      animation: loader-spin 1.7s linear infinite;
+    }
+    .loader-orbit::before {
+      position: absolute;
+      top: -0.25rem;
+      left: 50%;
+      width: 0.5rem;
+      height: 0.5rem;
+      border-radius: 50%;
+      background: #60a5fa;
+      content: '';
+      transform: translateX(-50%);
+    }
+    .loader-brand {
+      font-size: 1.25rem;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+    }
+    .loader-brand span { color: #60a5fa; }
+    .loader-bar {
+      width: 9rem;
+      height: 0.2rem;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(148, 163, 184, 0.18);
+    }
+    .loader-bar::after {
+      display: block;
+      width: 45%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #2563eb, #60a5fa);
+      content: '';
+      animation: loader-slide 1.15s ease-in-out infinite;
+    }
+    @keyframes loader-spin { to { transform: rotate(360deg); } }
+    @keyframes loader-float {
+      0%, 100% { transform: translateY(0) scale(1); }
+      50% { transform: translateY(-0.35rem) scale(1.03); }
+    }
+    @keyframes loader-slide {
+      from { transform: translateX(-110%); }
+      to { transform: translateX(245%); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .loader-wallet, .loader-orbit, .loader-bar::after { animation: none; }
+    }
+  </style>
 </head>
-<body class="bg-light">
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
-        <div class="container">
-            <a href="/" class="navbar-brand d-flex align-items-center gap-2 fw-bold">
-                <i class="ph-fill ph-wallet fs-3"></i>
-                NexusPay
-            </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav me-auto">
-                    <li class="nav-item"><a href="#" class="nav-link active">Dashboard</a></li>
-                    <li class="nav-item"><a href="#" class="nav-link">Transactions</a></li>
-                    <li class="nav-item"><a href="#" class="nav-link">Cards</a></li>
-                    <li class="nav-item"><a href="#" class="nav-link">Settings</a></li>
-                </ul>
-                <div class="d-flex align-items-center text-white gap-2">
-                    <div class="rounded-circle bg-white text-primary d-flex align-items-center justify-content-center fw-bold" style="width: 32px; height: 32px;">J</div>
-                    <span>John Doe</span>
-                </div>
-            </div>
-        </div>
-    </nav>
+<body class="h-full bg-slate-50 font-sans antialiased">
 
-    <main class="container">
-        {% block content %}
-        {% endblock %}
-    </main>
-    
-    <!-- Bootstrap JS Bundle -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <div id="page-loader" role="status" aria-live="polite" aria-label="Loading NexusPay">
+    <div class="loader-content">
+      <div class="loader-mark" aria-hidden="true">
+        <div class="loader-orbit"></div>
+        <div class="loader-wallet">
+          <svg xmlns="http://www.w3.org/2000/svg" width="29" height="29" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>
+          </svg>
+        </div>
+      </div>
+      <div class="loader-brand">Nexus<span>Pay</span></div>
+      <div class="loader-bar" aria-hidden="true"></div>
+    </div>
+  </div>
+
+  <div class="flex h-full min-h-screen" id="app-layout">
+
+    <!-- ── SIDEBAR ────────────────────────────────────────────────── -->
+    <aside id="sidebar" class="fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 flex flex-col shadow-2xl transition-all duration-300">
+
+      <!-- Logo + Toggle -->
+      <div class="flex items-center justify-between px-4 py-5 border-b border-slate-700/50">
+        <div class="flex items-center gap-3 sidebar-logo cursor-pointer" id="sidebar-logo-toggle" title="Toggle Sidebar">
+          <div class="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center flex-shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M21 7H3a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zm-1 12H4V9h16v10z"/><path d="M16 13h2v2h-2z"/><path d="M5 3h14a1 1 0 0 1 1 1v1H4V4a1 1 0 0 1 1-1z"/>
+            </svg>
+          </div>
+          <span class="text-white font-extrabold text-lg tracking-tight sidebar-logo-text">NexusPay</span>
+        </div>
+      </div>
+
+      <!-- Navigation -->
+      <nav class="flex-1 px-3 py-5 space-y-1 overflow-y-auto">
+        <p class="px-4 text-xs font-semibold text-slate-500 uppercase tracking-widest mb-3 sidebar-section-title">Main Menu</p>
+
+        <a href="{% url 'dashboard' %}" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all {% if active_page == 'dashboard' %}bg-slate-800 text-white{% endif %}" title="Dashboard">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg>
+          <span class="sidebar-link-text">Dashboard</span>
+        </a>
+
+        <a href="{% url 'accounts' %}" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all {% if active_page == 'accounts' %}bg-slate-800 text-white{% endif %}" title="Accounts">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/>
+            <path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>
+          </svg>
+          <span class="sidebar-link-text">Accounts</span>
+        </a>
+
+        <a href="{% url 'transactions' %}" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all {% if active_page == 'transactions' %}bg-slate-800 text-white{% endif %}" title="Transactions">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>
+          <span class="sidebar-link-text">Transactions</span>
+        </a>
+
+        <a href="{% url 'create_wallet' %}" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all {% if active_page == 'create_wallet' %}bg-slate-800 text-white{% endif %}" title="Create Wallet">
+          <!-- Lucide Wallet Icon Matched to Sidebar Style -->
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/>
+            <path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>
+          </svg>
+          <span class="sidebar-link-text">Create Wallet</span>
+        </a>
+
+        <a href="{% url 'wallet_management' %}" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all {% if active_page == 'wallet_management' %}bg-slate-800 text-white{% endif %}" title="Manage Wallet">
+          <!-- Lucide Settings Icon -->
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6M4.22 4.22l4.24 4.24m5.08 5.08l4.24 4.24M1 12h6m6 0h6M4.22 19.78l4.24-4.24m5.08-5.08l4.24-4.24"/>
+          </svg>
+          <span class="sidebar-link-text">Manage Wallet</span>
+        </a>
+
+        <p class="px-4 text-xs font-semibold text-slate-500 uppercase tracking-widest mt-5 mb-3 sidebar-section-title">Actions</p>
+
+        <a href="{% url 'send' %}" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all {% if active_page == 'send' %}bg-slate-800 text-white{% endif %}" title="Send Money">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          <span class="sidebar-link-text">Send Money</span>
+        </a>
+
+        <a href="{% url 'topup' %}" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all {% if active_page == 'topup' %}bg-slate-800 text-white{% endif %}" title="Top Up">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+          <span class="sidebar-link-text">Top Up</span>
+        </a>
+
+        <a href="{% url 'bakong_topup' %}" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all {% if active_page == 'bakong_topup' %}bg-slate-800 text-white{% endif %}" title="Bakong Top Up">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect width="5" height="5" x="3" y="3" rx="1"/>
+            <rect width="5" height="5" x="16" y="3" rx="1"/>
+            <rect width="5" height="5" x="3" y="16" rx="1"/>
+            <path d="M16 16h.01M19 16h2v2M16 21h2M21 21v.01M12 7v3a2 2 0 0 1-2 2H7M3 12h.01M12 3h.01M12 16v.01M16 12h1M21 12v.01M12 21v-1"/>
+          </svg>
+          <span class="sidebar-link-text">Bakong Top Up</span>
+        </a>
+
+        <a href="{% url 'bill_payment' %}" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all {% if active_page == 'bill_payment' %}bg-slate-800 text-white{% endif %}" title="Pay Bill">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+          </svg>
+          <span class="sidebar-link-text">Pay Bill</span>
+        </a>
+
+        <a href="{% url 'reports' %}" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all {% if active_page == 'reports' %}bg-slate-800 text-white{% endif %}" title="Reports">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+          </svg>
+          <span class="sidebar-link-text">Reports</span>
+        </a>
+
+        <a href="{% url 'kyc' %}" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all {% if active_page == 'kyc' %}bg-slate-800 text-white{% endif %}" title="KYC Verification">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a7 7 0 017 7v3a7 7 0 11-14 0V9a7 7 0 017-7z"/><path d="M8 12h8"/></svg>
+          <span class="sidebar-link-text">KYC Verification</span>
+        </a>
+        {% if request.user.is_superuser or request.user.is_staff or request.user.role == 'admin' %}
+        <p class="px-4 text-xs font-semibold text-slate-500 uppercase tracking-widest mt-5 mb-3 sidebar-section-title">Administration</p>
+        
+        <a href="/admin/" target="_blank" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all" title="Django Admin">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/>
+          </svg>
+          <span class="sidebar-link-text">Django Admin</span>
+        </a>
+        
+        <a href="{% url 'kyc_review' %}" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all {% if active_page == 'kyc_review' %}bg-slate-800 text-white{% endif %}" title="Review KYC">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12H5a2 2 0 00-2 2v4a2 2 0 002 2h4"/><path d="M15 12h4a2 2 0 012 2v4a2 2 0 01-2 2h-4"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/></svg>
+          <span class="sidebar-link-text">Review KYC</span>
+        </a>
+        {% endif %}
+
+        <p class="px-4 text-xs font-semibold text-slate-500 uppercase tracking-widest mt-5 mb-3 sidebar-section-title">Account</p>
+
+        <a href="{% url 'profile' %}" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all {% if active_page == 'profile' %}bg-slate-800 text-white{% endif %}" title="Profile">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <span class="sidebar-link-text">Profile</span>
+        </a>
+      </nav>
+
+      <!-- User + Logout -->
+      <div class="p-3 border-t border-slate-700/50">
+        <div class="flex items-center gap-3 p-3 rounded-xl bg-slate-800/60 mb-2 sidebar-user">
+          <div class="w-9 h-9 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
+            {{ request.user.full_name|first|upper }}
+          </div>
+          <div class="min-w-0 sidebar-user-info">
+            <p class="text-white text-sm font-semibold truncate">{{ request.user.full_name }}</p>
+            <p class="text-slate-400 text-xs truncate">{{ request.user.email }}</p>
+          </div>
+        </div>
+        <form method="post" action="{% url 'logout' %}">
+          {% csrf_token %}
+          <button type="submit" class="w-full flex items-center justify-center gap-3 px-4 py-2.5 rounded-xl text-slate-400 hover:bg-red-600/10 hover:text-red-400 transition-all text-sm font-medium sidebar-logout" title="Sign Out">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            <span class="sidebar-logout-text">Sign Out</span>
+          </button>
+        </form>
+      </div>
+    </aside>
+
+    <!-- ── MAIN CONTENT ──────────────────────────────────────────── -->
+    <div id="main-content" class="ml-64 flex-1 flex flex-col min-h-screen transition-all duration-300">
+
+      <!-- Top Bar -->
+      <header class="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-40">
+        <div class="flex items-center gap-3">
+          <button id="mobile-sidebar-toggle" class="lg:hidden p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/>
+            </svg>
+          </button>
+          <h1 class="text-xl font-bold text-slate-800">{% block page_title %}Dashboard{% endblock %}</h1>
+        </div>
+        <div class="flex items-center gap-1 sm:gap-2">
+          {% if request.user.is_authenticated %}
+          {% with receive_wallet=request.user.wallets.first %}
+          {% if receive_wallet %}
+          <!-- Receive by QR -->
+          <button type="button" id="openReceiveQr" class="relative p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all" title="Receive by QR" aria-label="Generate receive QR code">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M16 16h.01M19 16h2v2M16 21h2M21 21v.01M12 7v3a2 2 0 0 1-2 2H7M3 12h.01M12 3h.01M12 16v.01M16 12h1M21 12v.01M12 21v-1"/></svg>
+          </button>
+          {% endif %}
+          {% endwith %}
+          {% endif %}
+          <!-- Notifications -->
+          <a href="{% url 'notifications' %}" class="relative p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all {% if active_page == 'notifications' %}text-blue-600 bg-blue-50{% endif %}" title="Notifications" aria-label="Notifications">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+            {% if unread_count %}
+            <!-- Priority: Security (red) > Bill Payment (amber) > Transfer (blue) > Others (slate) -->
+            <span class="absolute top-1 right-1 min-w-[1.25rem] h-5 px-1 rounded-full text-white text-xs flex items-center justify-center font-medium
+              {% if unread_security_count %}bg-red-500
+              {% elif unread_bill_payment_count %}bg-amber-500
+              {% elif unread_transfer_count %}bg-blue-500
+              {% else %}bg-slate-500{% endif %}">
+              {{ unread_count }}
+            </span>
+            {% endif %}
+          </a>
+        </div>
+      </header>
+
+      <!-- Flash Messages -->
+      {% if messages %}
+      <div class="px-8 pt-4">
+        {% for msg in messages %}
+        <div class="flex items-center gap-3 p-4 rounded-xl mb-2 text-sm font-medium
+          {% if msg.tags == 'success' %}bg-emerald-50 text-emerald-800 border border-emerald-200
+          {% elif msg.tags == 'error' %}bg-red-50 text-red-800 border border-red-200
+          {% else %}bg-blue-50 text-blue-800 border border-blue-200{% endif %}">
+          {% if msg.tags == 'success' %}
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-emerald-500 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+          {% else %}
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          {% endif %}
+          {{ msg }}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <!-- Page Content -->
+      <main class="flex-1 p-8">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+
+  </div>
+
+  {% if request.user.is_authenticated %}
+  {% with receive_wallet=request.user.wallets.first %}
+  {% if receive_wallet %}
+  <!-- Receive QR Dialog -->
+  <div id="receiveQrModal" class="fixed inset-0 z-[70] hidden items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="receiveQrTitle">
+    <div class="relative flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-lg bg-slate-900 text-white shadow-2xl">
+      <div class="flex items-start justify-between px-5 pb-4 pt-5">
+        <div>
+          <h2 id="receiveQrTitle" class="text-xl font-bold">Receive money</h2>
+          <p class="mt-1 text-sm text-slate-400">Enter an amount to generate your QR code.</p>
+        </div>
+        <button type="button" id="closeReceiveQr" class="ml-4 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-white/10 text-slate-300 transition hover:bg-white/20 hover:text-white" aria-label="Close receive QR">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <div class="overflow-y-auto px-5 pb-5">
+        <section class="overflow-hidden rounded-lg bg-[#10212d] shadow-xl" aria-label="Receiver QR card">
+          <div class="bg-blue-600 px-5 py-3 text-center text-xl font-extrabold tracking-wide">NEXUS<span class="text-white/80">QR</span></div>
+          <div class="border-b border-dashed border-slate-400/70 px-6 py-4">
+            <p class="text-sm font-bold uppercase text-slate-200">{{ request.user.full_name }}</p>
+            <p id="qrAmountDisplay" class="mt-1 hidden text-3xl font-light">0 <span class="text-base text-slate-400">{{ receive_wallet.currency }}</span></p>
+            <p class="mt-1 text-xs text-slate-400">{{ receive_wallet.wallet_number }}</p>
+          </div>
+          <div class="p-6">
+            <div id="receiveQrCode" class="mx-auto flex aspect-square w-full max-w-[280px] items-center justify-center rounded-lg bg-white p-3">
+              <div id="qrPlaceholder" class="px-8 text-center text-sm font-medium text-slate-400">Your QR code will appear here</div>
+            </div>
+          </div>
+        </section>
+
+        <div class="mt-5 grid grid-cols-[112px_1fr] gap-3">
+          <label class="block">
+            <span class="mb-2 block text-xs font-semibold uppercase text-slate-400">Currency</span>
+            <select id="receiveCurrency" class="h-12 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 text-sm font-bold text-white outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20">
+              <option value="{{ receive_wallet.currency }}">{{ receive_wallet.currency }}</option>
+            </select>
+          </label>
+          <label class="block">
+            <span class="mb-2 block text-xs font-semibold uppercase text-slate-400">Amount</span>
+            <button type="button" id="receiveAmountBtn" class="h-12 w-full rounded-lg border border-slate-700 bg-slate-800 px-4 text-base font-semibold text-white outline-none transition hover:border-cyan-400 hover:text-cyan-400 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20">
+              Amount
+            </button>
+            <input id="receiveAmount" type="number" min="0" step="0.01" inputmode="decimal" value="0" class="hidden h-12 w-full rounded-lg border border-slate-700 bg-slate-800 px-4 text-base font-semibold text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20" autocomplete="off">
+          </label>
+        </div>
+        <p id="receiveAmountError" class="mt-2 hidden text-sm text-red-400" role="alert">Amount cannot be negative.</p>
+
+        <button type="button" id="downloadReceiveQr" disabled class="mt-4 inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-cyan-500 px-4 text-sm font-bold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-500">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          Download QR
+        </button>
+      </div>
+    </div>
+  </div>
+  {{ request.user.full_name|json_script:"receive-user-name" }}
+  {{ receive_wallet.wallet_number|json_script:"receive-wallet-number" }}
+  {% endif %}
+  {% endwith %}
+  {% endif %}
+
+  <style>
+    /* Hide scrollbar for Chrome, Safari and Opera */
+    #sidebar nav::-webkit-scrollbar {
+      display: none;
+    }
+    /* Hide scrollbar for IE, Edge and Firefox */
+    #sidebar nav {
+      -ms-overflow-style: none;  /* IE and Edge */
+      scrollbar-width: none;  /* Firefox */
+    }
+
+    /* Sidebar Collapsed State */
+    #sidebar.collapsed {
+      width: 72px;
+    }
+    #sidebar.collapsed .sidebar-logo-text,
+    #sidebar.collapsed .sidebar-link-text,
+    #sidebar.collapsed .sidebar-section-title,
+    #sidebar.collapsed .sidebar-user-info,
+    #sidebar.collapsed .sidebar-logout-text {
+      display: none;
+    }
+    #sidebar.collapsed .sidebar-logo {
+      justify-content: center;
+    }
+    #sidebar.collapsed .sidebar-link {
+      justify-content: center;
+      padding-left: 0;
+      padding-right: 0;
+    }
+    #sidebar.collapsed .sidebar-user {
+      justify-content: center;
+    }
+    #main-content.sidebar-collapsed {
+      margin-left: 72px;
+    }
+
+    /* Mobile overlay */
+    #sidebar-overlay {
+      display: none;
+    }
+    @media (max-width: 1024px) {
+      #sidebar {
+        transform: translateX(-100%);
+      }
+      #sidebar.mobile-open {
+        transform: translateX(0);
+      }
+      #main-content {
+        margin-left: 0 !important;
+      }
+      #sidebar-overlay.active {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.5);
+        z-index: 40;
+      }
+    }
+  </style>
+
+  <script>
+    (() => {
+      const loader = document.getElementById('page-loader');
+      if (!loader) return;
+
+      const hideLoader = () => loader.classList.add('is-hidden');
+      const showLoader = () => loader.classList.remove('is-hidden');
+
+      // Keep the opening animation visible briefly, then reveal the application.
+      window.setTimeout(hideLoader, 550);
+      window.addEventListener('pageshow', () => window.setTimeout(hideLoader, 100));
+
+      document.addEventListener('click', (event) => {
+        const link = event.target.closest('a[href]');
+        if (!link || event.defaultPrevented || event.button !== 0) return;
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        if (link.target === '_blank' || link.hasAttribute('download') || link.dataset.noLoader !== undefined) return;
+
+        const destination = new URL(link.href, window.location.href);
+        const isSamePageAnchor = destination.pathname === window.location.pathname
+          && destination.search === window.location.search
+          && destination.hash;
+        if (destination.origin === window.location.origin && !isSamePageAnchor) showLoader();
+      });
+
+      document.addEventListener('submit', (event) => {
+        if (!event.defaultPrevented && event.target.dataset.noLoader === undefined) showLoader();
+      });
+    })();
+  </script>
+
+  <script>
+    (function() {
+      const sidebar = document.getElementById('sidebar');
+      const mainContent = document.getElementById('main-content');
+      const logoToggle = document.getElementById('sidebar-logo-toggle');
+      const mobileToggleBtn = document.getElementById('mobile-sidebar-toggle');
+
+      // Load saved state
+      const isCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+      if (isCollapsed && window.innerWidth > 1024) {
+        sidebar.classList.add('collapsed');
+        mainContent.classList.add('sidebar-collapsed');
+      }
+
+      // Logo click toggle (desktop)
+      if (logoToggle) {
+        logoToggle.addEventListener('click', () => {
+          sidebar.classList.toggle('collapsed');
+          mainContent.classList.toggle('sidebar-collapsed');
+          localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+        });
+      }
+
+      // Mobile toggle
+      if (mobileToggleBtn) {
+        mobileToggleBtn.addEventListener('click', () => {
+          sidebar.classList.toggle('mobile-open');
+        });
+      }
+    })();
+  </script>
+  {% if request.user.is_authenticated %}
+  <script>
+    (() => {
+      const openButton = document.getElementById('openReceiveQr');
+      const modal = document.getElementById('receiveQrModal');
+      if (!openButton || !modal) return;
+
+      const closeButton = document.getElementById('closeReceiveQr');
+      const amountInput = document.getElementById('receiveAmount');
+      const amountBtn = document.getElementById('receiveAmountBtn');
+      const currencyInput = document.getElementById('receiveCurrency');
+      const amountDisplay = document.getElementById('qrAmountDisplay');
+      const qrContainer = document.getElementById('receiveQrCode');
+      const error = document.getElementById('receiveAmountError');
+      const downloadButton = document.getElementById('downloadReceiveQr');
+      const receiverName = JSON.parse(document.getElementById('receive-user-name').textContent);
+      const walletNumber = JSON.parse(document.getElementById('receive-wallet-number').textContent);
+      let renderTimer;
+
+      const closeModal = () => {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        document.body.classList.remove('overflow-hidden');
+        openButton.focus();
+        // Reset to initial state
+        if (amountBtn && amountInput) {
+          amountBtn.classList.remove('hidden');
+          amountInput.classList.add('hidden');
+          amountInput.value = '0';
+        }
+        if (amountDisplay) {
+          amountDisplay.classList.add('hidden');
+        }
+      };
+
+      const renderQr = () => {
+        const rawAmount = amountInput.value.trim();
+        const amount = Number(rawAmount);
+        const currency = currencyInput.value;
+        qrContainer.replaceChildren();
+
+        if (rawAmount === '' || !Number.isFinite(amount) || amount < 0) {
+          const placeholder = document.createElement('div');
+          placeholder.id = 'qrPlaceholder';
+          placeholder.className = 'px-8 text-center text-sm font-medium text-slate-400';
+          placeholder.textContent = 'Your QR code will appear here';
+          qrContainer.appendChild(placeholder);
+          amountDisplay.innerHTML = `0 <span class="text-base text-slate-400">${currency}</span>`;
+          error.classList.toggle('hidden', rawAmount === '');
+          downloadButton.disabled = true;
+          return;
+        }
+
+        const formattedAmount = amount.toFixed(2);
+        amountDisplay.innerHTML = `${formattedAmount} <span class="text-base text-slate-400">${currency}</span>`;
+        error.classList.add('hidden');
+
+        if (typeof QRCode === 'undefined') {
+          const failure = document.createElement('p');
+          failure.className = 'px-6 text-center text-sm font-medium text-red-500';
+          failure.textContent = 'QR generator could not load. Check your connection and try again.';
+          qrContainer.appendChild(failure);
+          downloadButton.disabled = true;
+          return;
+        }
+
+        const payload = JSON.stringify({
+          type: 'NEXUSPAY_RECEIVE',
+          version: 1,
+          receiver: receiverName,
+          wallet: walletNumber,
+          currency,
+          amount: formattedAmount,
+        });
+        const qrSize = Math.min(256, Math.max(160, qrContainer.clientWidth - 24));
+        new QRCode(qrContainer, {
+          text: payload,
+          width: qrSize,
+          height: qrSize,
+          colorDark: '#020617',
+          colorLight: '#ffffff',
+          correctLevel: QRCode.CorrectLevel.H,
+        });
+        const qrImage = qrContainer.querySelector('img');
+        if (qrImage) qrImage.alt = `Receive ${formattedAmount} ${currency} QR code`;
+        downloadButton.disabled = false;
+      };
+
+      openButton.addEventListener('click', () => {
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        document.body.classList.add('overflow-hidden');
+        renderQr();
+        // Focus on Amount button since input starts hidden
+        window.setTimeout(() => amountBtn.focus(), 50);
+      });
+      closeButton.addEventListener('click', closeModal);
+      modal.addEventListener('click', (event) => {
+        if (event.target === modal) closeModal();
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !modal.classList.contains('hidden')) closeModal();
+      });
+      amountInput.addEventListener('input', () => {
+        window.clearTimeout(renderTimer);
+        renderTimer = window.setTimeout(renderQr, 120);
+      });
+
+      // Toggle amount button to input and show amount display
+      if (amountBtn) {
+        amountBtn.addEventListener('click', () => {
+          amountBtn.classList.add('hidden');
+          amountInput.classList.remove('hidden');
+          amountDisplay.classList.remove('hidden');
+          amountInput.focus();
+        });
+      }
+
+      currencyInput.addEventListener('change', renderQr);
+      downloadButton.addEventListener('click', () => {
+        const qrCanvas = qrContainer.querySelector('canvas');
+        const qrImage = qrContainer.querySelector('img');
+        const qrSource = qrCanvas || qrImage;
+        if (!qrSource) return;
+
+        // Build a complete, shareable payment card instead of saving only the QR square.
+        const card = document.createElement('canvas');
+        card.width = 816;
+        card.height = 986;
+        const context = card.getContext('2d');
+        const amount = Number(amountInput.value).toFixed(2);
+        const currency = currencyInput.value;
+
+        const roundedRectangle = (x, y, width, height, radius) => {
+          context.beginPath();
+          context.roundRect(x, y, width, height, radius);
+        };
+
+        context.save();
+        roundedRectangle(0, 0, card.width, card.height, 18);
+        context.clip();
+
+        context.fillStyle = '#10212d';
+        context.fillRect(0, 0, card.width, card.height);
+        context.fillStyle = '#2563eb';
+        context.fillRect(0, 0, card.width, 104);
+
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillStyle = '#ffffff';
+        context.font = '800 40px Arial, sans-serif';
+        context.fillText('NEXUSQR', card.width / 2, 53);
+
+        context.textAlign = 'left';
+        context.fillStyle = '#e2e8f0';
+        context.font = '700 29px Arial, sans-serif';
+        context.fillText(receiverName.toUpperCase(), 48, 158);
+
+        context.fillStyle = '#f8fafc';
+        context.font = '300 62px Arial, sans-serif';
+        context.fillText(amount, 48, 226);
+        const amountWidth = context.measureText(amount).width;
+        context.fillStyle = '#94a3b8';
+        context.font = '300 32px Arial, sans-serif';
+        context.fillText(currency, 68 + amountWidth, 235);
+
+        context.font = '400 25px Arial, sans-serif';
+        context.fillText(walletNumber, 48, 282);
+
+        context.strokeStyle = '#94a3b8';
+        context.lineWidth = 2;
+        context.setLineDash([7, 5]);
+        context.beginPath();
+        context.moveTo(0, 329);
+        context.lineTo(card.width, 329);
+        context.stroke();
+        context.setLineDash([]);
+
+        roundedRectangle(128, 378, 560, 560, 16);
+        context.fillStyle = '#ffffff';
+        context.fill();
+        context.imageSmoothingEnabled = false;
+        context.drawImage(qrSource, 152, 402, 512, 512);
+        context.restore();
+
+        const link = document.createElement('a');
+        link.href = card.toDataURL('image/png');
+        link.download = `nexuspay-${currencyInput.value}-${Number(amountInput.value).toFixed(2)}.png`;
+        link.click();
+      });
+    })();
+  </script>
+  {% endif %}
+  {% block extra_js %}{% endblock %}
 </body>
 </html>
