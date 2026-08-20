@@ -44,8 +44,8 @@ def send_email(to_email, subject, html_content, text_content=None):
     from_email = getattr(settings, 'RESEND_FROM_EMAIL', 'onboarding@resend.dev')
 
     # Validate from email
-    if not from_email or from_email == 'onboarding@resend.dev':
-        return {"success": False, "error": "RESEND_FROM_EMAIL not configured. Please set a verified domain email."}
+    if not from_email:
+        return {"success": False, "error": "RESEND_FROM_EMAIL not configured. Please set a from email address."}
 
     params = {
         "from": from_email,

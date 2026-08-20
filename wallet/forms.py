@@ -118,7 +118,47 @@ class KYCVerificationForm(forms.Form):
         widget=forms.DateInput(attrs={'type': 'date'}),
         label='Date of Birth'
     )
-    address = forms.CharField(widget=forms.Textarea(attrs={'rows': 3}), label='Address')
+    
+    # Hierarchical Address Fields
+    province = forms.ModelChoiceField(
+        queryset=None,  # Set in __init__
+        label='Province',
+        required=True,
+        empty_label='Select Province',
+    )
+    district = forms.ModelChoiceField(
+        queryset=None,  # Set in __init__
+        label='District',
+        required=True,
+        empty_label='Select District',
+    )
+    commune = forms.ModelChoiceField(
+        queryset=None,  # Set in __init__
+        label='Commune',
+        required=True,
+        empty_label='Select Commune',
+    )
+    village = forms.ModelChoiceField(
+        queryset=None,  # Set in __init__
+        label='Village',
+        required=True,
+        empty_label='Select Village',
+    )
+    address_detail = forms.CharField(
+        max_length=255,
+        label='Address Details',
+        required=False,
+        widget=forms.TextInput(attrs={'placeholder': 'House number, street, building, etc.'}),
+        help_text='Optional: Additional address details'
+    )
+    
+    # Legacy address field (kept for backwards compatibility, auto-populated)
+    address = forms.CharField(
+        widget=forms.Textarea(attrs={'rows': 3, 'readonly': 'readonly'}),
+        label='Full Address',
+        required=False,
+    )
+    
     nationality = forms.CharField(max_length=100, label='Nationality')
     national_id = forms.CharField(max_length=100, label='National ID Number')
     id_document = forms.FileField(label='ID Document (Passport / National ID)')
@@ -127,7 +167,46 @@ class KYCVerificationForm(forms.Form):
     def __init__(self, *args, user=None, **kwargs):
         self.user = user
         super().__init__(*args, **kwargs)
-
+        
+        # Import models here to avoid circular imports
+        from .models import Province, District, Commune, Village
+        
+        # Set queryset for province (always show all active provinces)
+        self.fields['province'].queryset = Province.objects.filter(is_active=True)
+        
+        # Initialize district, commune, village as empty
+        self.fields['district'].queryset = District.objects.none()
+        self.fields['commune'].queryset = Commune.objects.none()
+        self.fields['village'].queryset = Village.objects.none()
+        
+        # If data is POSTed, filter based on selection
+        if args and len(args) > 0:
+            data = args[0]
+            if data.get('province'):
+                try:
+                    province_id = int(data.get('province'))
+                    self.fields['district'].queryset = District.objects.filter(
+                        province_id=province_id, is_active=True
+                    )
+                except (ValueError, TypeError):
+                    pass
+            if data.get('district'):
+                try:
+                    district_id = int(data.get('district'))
+                    self.fields['commune'].queryset = Commune.objects.filter(
+                        district_id=district_id, is_active=True
+                    )
+                except (ValueError, TypeError):
+                    pass
+            if data.get('commune'):
+                try:
+                    commune_id = int(data.get('commune'))
+                    self.fields['village'].queryset = Village.objects.filter(
+                        commune_id=commune_id, is_active=True
+                    )
+                except (ValueError, TypeError):
+                    pass
+    
     def clean_national_id(self):
         national_id = self.cleaned_data.get('national_id')
         if national_id:
@@ -136,6 +215,31 @@ class KYCVerificationForm(forms.Form):
             if existing and (not self.user or existing.user != self.user):
                 raise ValidationError('This National ID is already registered with another account.')
         return national_id
+    
+    def clean(self):
+        cleaned = super().clean()
+        
+        # Auto-generate full address text
+        village = cleaned.get('village')
+        address_detail = cleaned.get('address_detail', '')
+        
+        if village:
+            commune = village.commune
+            district = commune.district
+            province = district.province
+            
+            full_address_parts = []
+            if address_detail:
+                full_address_parts.append(address_detail)
+            full_address_parts.extend([
+                village.name,
+                commune.name,
+                district.name,
+                province.name
+            ])
+            cleaned['address'] = ', '.join(full_address_parts)
+        
+        return cleaned
 
 
 class ChangePasswordForm(forms.Form):

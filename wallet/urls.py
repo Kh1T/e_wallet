@@ -78,6 +78,12 @@ urlpatterns = [
     path('api/bakong/payment/<int:payment_id>/status/', views.BakongPaymentStatusAPI.as_view(), name='bakong-payment-status'),
     path('webhooks/bakong/', views.BakongWebhookView.as_view(), name='bakong-webhook'),
 
+    # ── Address Hierarchy API endpoints ───────────────────────────
+    path('api/address/provinces/', views.ProvinceListView.as_view(), name='address-provinces'),
+    path('api/address/districts/', views.DistrictListView.as_view(), name='address-districts'),
+    path('api/address/communes/', views.CommuneListView.as_view(), name='address-communes'),
+    path('api/address/villages/', views.VillageListView.as_view(), name='address-villages'),
+
     # ── Resource API endpoints (CRUD) ───────────────────────────────
     path('api/', include(router.urls)),
 ]

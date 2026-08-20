@@ -15,6 +15,10 @@ class User(AbstractUser):
     password_reset_token = models.CharField(max_length=255, null=True, blank=True)
     password_reset_sent_at = models.DateTimeField(null=True, blank=True)
 
+    # Address fields - current residence
+    village = models.ForeignKey('Village', on_delete=models.SET_NULL, null=True, blank=True, related_name='residents')
+    street_address = models.CharField(max_length=255, null=True, blank=True, help_text="House number, street, building")
+
     # AbstractUser already has password, date_joined, etc.
 
 class Wallet(models.Model):
@@ -92,7 +96,12 @@ class IdentityVerification(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     national_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
     date_of_birth = models.DateField(null=True, blank=True)
-    address = models.TextField(null=True, blank=True)
+    
+    # Address - can use village from hierarchy OR free text
+    village = models.ForeignKey('Village', on_delete=models.SET_NULL, null=True, blank=True, related_name='kyc_residents')
+    address_detail = models.CharField(max_length=255, null=True, blank=True, help_text="House number, street, additional details")
+    address = models.TextField(null=True, blank=True, help_text="Legacy free-text address (auto-generated from village if empty)")
+    
     nationality = models.CharField(max_length=100, null=True, blank=True)
     id_document = models.CharField(max_length=255, null=True, blank=True)
     selfie_image = models.CharField(max_length=255, null=True, blank=True)
@@ -100,6 +109,16 @@ class IdentityVerification(models.Model):
     verified_at = models.DateTimeField(null=True, blank=True)
     rejection_reason = models.TextField(null=True, blank=True, help_text='Reason for rejection (shown to user)')
     created_at = models.DateTimeField(auto_now_add=True)
+    
+    def save(self, *args, **kwargs):
+        # Auto-generate address text from village if empty
+        if not self.address and self.village:
+            commune = self.village.commune
+            district = commune.district
+            province = district.province
+            detail = self.address_detail or ""
+            self.address = f"{detail}, {self.village.name}, {commune.name}, {district.name}, {province.name}".lstrip(", ")
+        super().save(*args, **kwargs)
 
 class Security(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
@@ -208,6 +227,83 @@ class FraudDetection(models.Model):
     risk_score = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
     status = models.CharField(max_length=50, default='pending')
     detected_at = models.DateTimeField(auto_now_add=True)
+
+
+# ── Address Hierarchy Models (Cambodia Administrative Divisions) ─────────────────
+
+class Province(models.Model):
+    """Cambodian provinces."""
+    code = models.CharField(max_length=10, unique=True)
+    name = models.CharField(max_length=100)
+    name_other = models.CharField(max_length=100, null=True, blank=True, help_text="English name or alternative")
+    created = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='provinces_created')
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['code']
+        verbose_name = 'Province'
+        verbose_name_plural = 'Provinces'
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+
+class District(models.Model):
+    """Cambodian districts (Khan/Srok)."""
+    province = models.ForeignKey(Province, on_delete=models.CASCADE, related_name='districts')
+    code = models.CharField(max_length=10, unique=True)
+    name = models.CharField(max_length=100)
+    name_other = models.CharField(max_length=100, null=True, blank=True, help_text="English name or alternative")
+    created = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='districts_created')
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['code']
+        verbose_name = 'District'
+        verbose_name_plural = 'Districts'
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+
+class Commune(models.Model):
+    """Cambodian communes (Sangkat/Khum)."""
+    district = models.ForeignKey(District, on_delete=models.CASCADE, related_name='communes')
+    code = models.CharField(max_length=10, unique=True)
+    name = models.CharField(max_length=100)
+    name_other = models.CharField(max_length=100, null=True, blank=True, help_text="English name or alternative")
+    created = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='communes_created')
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['code']
+        verbose_name = 'Commune'
+        verbose_name_plural = 'Communes'
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+
+class Village(models.Model):
+    """Cambodian villages (Phum)."""
+    commune = models.ForeignKey(Commune, on_delete=models.CASCADE, related_name='villages')
+    code = models.CharField(max_length=10, unique=True)
+    name = models.CharField(max_length=100)
+    name_other = models.CharField(max_length=100, null=True, blank=True, help_text="English name or alternative")
+    created = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='villages_created')
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['code']
+        verbose_name = 'Village'
+        verbose_name_plural = 'Villages'
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
 
 
 from django.db.models.signals import post_save

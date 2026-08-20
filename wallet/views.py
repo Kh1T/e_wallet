@@ -1496,7 +1496,16 @@ class KYCVerificationView(LoginRequiredMixin, View):
             'address':       verification.address,
             'nationality':   verification.nationality,
             'national_id':   verification.national_id,
+            'address_detail': verification.address_detail,
         }
+        
+        # Pre-populate address hierarchy if village is set
+        if verification.village:
+            initial['province'] = verification.village.commune.district.province.id
+            initial['district'] = verification.village.commune.district.id
+            initial['commune'] = verification.village.commune.id
+            initial['village'] = verification.village.id
+        
         form = KYCVerificationForm(initial=initial)
         return render(request, self.template_name, {
             'form': form,
@@ -1574,7 +1583,9 @@ class KYCVerificationView(LoginRequiredMixin, View):
                     })
                 
                 verification.date_of_birth = d['date_of_birth']
-                verification.address = d['address']
+                verification.village = d.get('village')  # Save village
+                verification.address_detail = d.get('address_detail', '')  # Save address detail
+                verification.address = d['address']  # Auto-generated full address
                 verification.nationality = d['nationality']
                 verification.national_id = d['national_id']
                 verification.id_document = id_document_url
@@ -3191,3 +3202,71 @@ class BakongPaymentHistoryView(LoginRequiredMixin, View):
             'active_page': 'bakong_history',
         }
         return render(request, self.template_name, ctx)
+
+
+# ── Address Hierarchy API Views ────────────────────────────────────────────
+
+class ProvinceListView(View):
+    """GET /api/address/provinces/ — List all provinces."""
+    
+    def get(self, request):
+        from .models import Province
+        provinces = Province.objects.filter(is_active=True).values('id', 'code', 'name', 'name_other').order_by('code')
+        return JsonResponse({
+            'success': True,
+            'data': list(provinces)
+        })
+
+
+class DistrictListView(View):
+    """GET /api/address/districts/?province_id=X — List districts by province."""
+    
+    def get(self, request):
+        from .models import District
+        province_id = request.GET.get('province_id')
+        
+        queryset = District.objects.filter(is_active=True)
+        if province_id:
+            queryset = queryset.filter(province_id=province_id)
+        
+        districts = queryset.values('id', 'code', 'name', 'name_other', 'province_id').order_by('code')
+        return JsonResponse({
+            'success': True,
+            'data': list(districts)
+        })
+
+
+class CommuneListView(View):
+    """GET /api/address/communes/?district_id=X — List communes by district."""
+    
+    def get(self, request):
+        from .models import Commune
+        district_id = request.GET.get('district_id')
+        
+        queryset = Commune.objects.filter(is_active=True)
+        if district_id:
+            queryset = queryset.filter(district_id=district_id)
+        
+        communes = queryset.values('id', 'code', 'name', 'name_other', 'district_id').order_by('code')
+        return JsonResponse({
+            'success': True,
+            'data': list(communes)
+        })
+
+
+class VillageListView(View):
+    """GET /api/address/villages/?commune_id=X — List villages by commune."""
+    
+    def get(self, request):
+        from .models import Village
+        commune_id = request.GET.get('commune_id')
+        
+        queryset = Village.objects.filter(is_active=True)
+        if commune_id:
+            queryset = queryset.filter(commune_id=commune_id)
+        
+        villages = queryset.values('id', 'code', 'name', 'name_other', 'commune_id').order_by('code')
+        return JsonResponse({
+            'success': True,
+            'data': list(villages)
+        })
