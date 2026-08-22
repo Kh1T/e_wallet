@@ -84,6 +84,12 @@ urlpatterns = [
     path('api/addresses/districts/<int:district_id>/communes/', views.CommuneListView.as_view(), name='address-communes'),
     path('api/addresses/communes/<int:commune_id>/villages/', views.VillageListView.as_view(), name='address-villages'),
 
+    # ── USP Address API proxy (does not use wallet_* address tables) ───────
+    path('api/usp-addresses/provinces/', views.USPProvinceListView.as_view(), name='usp-address-provinces'),
+    path('api/usp-addresses/provinces/<str:province>/districts/', views.USPDistrictListView.as_view(), name='usp-address-districts'),
+    path('api/usp-addresses/districts/<str:district>/communes/', views.USPCommuneListView.as_view(), name='usp-address-communes'),
+    path('api/usp-addresses/communes/<str:commune>/villages/', views.USPVillageListView.as_view(), name='usp-address-villages'),
+
     # ── Resource API endpoints (CRUD) ───────────────────────────────
     path('api/', include(router.urls)),
 ]

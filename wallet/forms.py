@@ -119,31 +119,16 @@ class KYCVerificationForm(forms.Form):
         label='Date of Birth'
     )
     
-    # Hierarchical Address Fields
-    province = forms.ModelChoiceField(
-        queryset=None,  # Set in __init__
-        label='Province',
-        required=True,
-        empty_label='Select Province',
-    )
-    district = forms.ModelChoiceField(
-        queryset=None,  # Set in __init__
-        label='District',
-        required=True,
-        empty_label='Select District',
-    )
-    commune = forms.ModelChoiceField(
-        queryset=None,  # Set in __init__
-        label='Commune',
-        required=True,
-        empty_label='Select Commune',
-    )
-    village = forms.ModelChoiceField(
-        queryset=None,  # Set in __init__
-        label='Village',
-        required=True,
-        empty_label='Select Village',
-    )
+    # Values come from the USP API.  These are not ModelChoiceFields because
+    # they deliberately do not depend on the local wallet_* address tables.
+    province = forms.CharField(max_length=50, label='Province')
+    district = forms.CharField(max_length=50, label='District')
+    commune = forms.CharField(max_length=50, label='Commune')
+    village = forms.CharField(max_length=50, label='Village')
+    province_name = forms.CharField(widget=forms.HiddenInput(), required=False)
+    district_name = forms.CharField(widget=forms.HiddenInput(), required=False)
+    commune_name = forms.CharField(widget=forms.HiddenInput(), required=False)
+    village_name = forms.CharField(widget=forms.HiddenInput(), required=False)
     address_detail = forms.CharField(
         max_length=255,
         label='Address Details',
@@ -168,44 +153,6 @@ class KYCVerificationForm(forms.Form):
         self.user = user
         super().__init__(*args, **kwargs)
         
-        # Import models here to avoid circular imports
-        from .models import Province, District, Commune, Village
-        
-        # Set queryset for province (always show all active provinces)
-        self.fields['province'].queryset = Province.objects.filter(is_active=True)
-        
-        # Initialize district, commune, village as empty
-        self.fields['district'].queryset = District.objects.none()
-        self.fields['commune'].queryset = Commune.objects.none()
-        self.fields['village'].queryset = Village.objects.none()
-        
-        # If data is POSTed, filter based on selection
-        if args and len(args) > 0:
-            data = args[0]
-            if data.get('province'):
-                try:
-                    province_id = int(data.get('province'))
-                    self.fields['district'].queryset = District.objects.filter(
-                        province_id=province_id, is_active=True
-                    )
-                except (ValueError, TypeError):
-                    pass
-            if data.get('district'):
-                try:
-                    district_id = int(data.get('district'))
-                    self.fields['commune'].queryset = Commune.objects.filter(
-                        district_id=district_id, is_active=True
-                    )
-                except (ValueError, TypeError):
-                    pass
-            if data.get('commune'):
-                try:
-                    commune_id = int(data.get('commune'))
-                    self.fields['village'].queryset = Village.objects.filter(
-                        commune_id=commune_id, is_active=True
-                    )
-                except (ValueError, TypeError):
-                    pass
     
     def clean_national_id(self):
         national_id = self.cleaned_data.get('national_id')
@@ -219,25 +166,22 @@ class KYCVerificationForm(forms.Form):
     def clean(self):
         cleaned = super().clean()
         
-        # Auto-generate full address text
-        village = cleaned.get('village')
+        # Save names returned by USP, rather than resolving local address rows.
         address_detail = cleaned.get('address_detail', '')
-        
-        if village:
-            commune = village.commune
-            district = commune.district
-            province = district.province
-            
+        names = [
+            cleaned.get('village_name'),
+            cleaned.get('commune_name'),
+            cleaned.get('district_name'),
+            cleaned.get('province_name'),
+        ]
+        if all(names):
             full_address_parts = []
             if address_detail:
                 full_address_parts.append(address_detail)
-            full_address_parts.extend([
-                village.name,
-                commune.name,
-                district.name,
-                province.name
-            ])
+            full_address_parts.extend(names)
             cleaned['address'] = ', '.join(full_address_parts)
+        elif any(cleaned.get(field) for field in ('province', 'district', 'commune', 'village')):
+            self.add_error('province', 'Please select the complete address from the list.')
         
         return cleaned
 

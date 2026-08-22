@@ -1499,13 +1499,6 @@ class KYCVerificationView(LoginRequiredMixin, View):
             'address_detail': verification.address_detail,
         }
         
-        # Pre-populate address hierarchy if village is set
-        if verification.village:
-            initial['province'] = verification.village.commune.district.province.id
-            initial['district'] = verification.village.commune.district.id
-            initial['commune'] = verification.village.commune.id
-            initial['village'] = verification.village.id
-        
         form = KYCVerificationForm(initial=initial)
         return render(request, self.template_name, {
             'form': form,
@@ -1583,7 +1576,7 @@ class KYCVerificationView(LoginRequiredMixin, View):
                     })
                 
                 verification.date_of_birth = d['date_of_birth']
-                verification.village = d.get('village')  # Save village
+                verification.village = None  # USP addresses are saved as text, not wallet_* rows
                 verification.address_detail = d.get('address_detail', '')  # Save address detail
                 verification.address = d['address']  # Auto-generated full address
                 verification.nationality = d['nationality']
@@ -3205,6 +3198,45 @@ class BakongPaymentHistoryView(LoginRequiredMixin, View):
 
 
 # ── Address Hierarchy API Views ────────────────────────────────────────────
+
+def _usp_address_response(fetcher, *args):
+    """Return USP address data in this project's usual {success, data} format."""
+    from .address_api import AddressAPIError
+
+    try:
+        payload = fetcher(*args)
+    except AddressAPIError as exc:
+        return JsonResponse({'success': False, 'message': str(exc)}, status=502)
+
+    # USP may return either a list or an object with a ``data`` field.
+    data = payload.get('data', payload) if isinstance(payload, dict) else payload
+    return JsonResponse({'success': True, 'data': data}, safe=False)
+
+
+class USPProvinceListView(View):
+    """List provinces from USP without reading wallet_province."""
+
+    def get(self, request):
+        from .address_api import get_provinces
+        return _usp_address_response(get_provinces)
+
+
+class USPDistrictListView(View):
+    def get(self, request, province):
+        from .address_api import get_districts
+        return _usp_address_response(get_districts, province)
+
+
+class USPCommuneListView(View):
+    def get(self, request, district):
+        from .address_api import get_communes
+        return _usp_address_response(get_communes, district)
+
+
+class USPVillageListView(View):
+    def get(self, request, commune):
+        from .address_api import get_villages
+        return _usp_address_response(get_villages, commune)
 
 class ProvinceListView(View):
     """GET /api/address/provinces/ — List all provinces."""

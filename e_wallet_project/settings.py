@@ -22,6 +22,17 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Load environment variables from .env file
 load_dotenv(BASE_DIR / '.env')
 
+# Bunli address service. Keep the bearer token in .env, never in source code.
+BUNLI_ADDRESS_API_URL = (
+    os.getenv('BUNLI_ADDRESS_API_URL')
+    or os.getenv('USP_ADDRESS_BASE_URL')
+    or 'https://usp.bunli-it.site/api/v1'
+).rstrip('/')
+BUNLI_ADDRESS_API_TOKEN = (
+    os.getenv('BUNLI_ADDRESS_API_TOKEN')
+    or os.getenv('USP_ADDRESS_API_TOKEN', '')
+)
+
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/

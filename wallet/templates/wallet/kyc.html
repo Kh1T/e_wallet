@@ -81,45 +81,37 @@
               <!-- Province -->
               <div>
                 <label class="block text-xs text-slate-500 mb-1">Province</label>
-                <select name="province" id="province-select" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" required>
+                <select name="province" id="province-select" data-selected="{{ form.province.value|default:'' }}" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" required>
                   <option value="">Select Province</option>
-                  {% for prov in form.fields.province.queryset %}
-                    <option value="{{ prov.id }}" {% if form.province.value == prov.id|stringformat:"i" %}selected{% endif %}>{{ prov.name }}</option>
-                  {% endfor %}
                 </select>
+                {{ form.province_name }}
                 {% if form.province.errors %}<p class="text-red-500 text-xs mt-1">{{ form.province.errors.0 }}</p>{% endif %}
               </div>
               <!-- District -->
               <div>
                 <label class="block text-xs text-slate-500 mb-1">District</label>
-                <select name="district" id="district-select" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" required>
+                <select name="district" id="district-select" data-selected="{{ form.district.value|default:'' }}" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" required>
                   <option value="">Select District</option>
-                  {% for dist in form.fields.district.queryset %}
-                    <option value="{{ dist.id }}" data-province="{{ dist.province_id }}" {% if form.district.value == dist.id|stringformat:"i" %}selected{% endif %}>{{ dist.name }}</option>
-                  {% endfor %}
                 </select>
+                {{ form.district_name }}
                 {% if form.district.errors %}<p class="text-red-500 text-xs mt-1">{{ form.district.errors.0 }}</p>{% endif %}
               </div>
               <!-- Commune -->
               <div>
                 <label class="block text-xs text-slate-500 mb-1">Commune</label>
-                <select name="commune" id="commune-select" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" required>
+                <select name="commune" id="commune-select" data-selected="{{ form.commune.value|default:'' }}" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" required>
                   <option value="">Select Commune</option>
-                  {% for comm in form.fields.commune.queryset %}
-                    <option value="{{ comm.id }}" data-district="{{ comm.district_id }}" {% if form.commune.value == comm.id|stringformat:"i" %}selected{% endif %}>{{ comm.name }}</option>
-                  {% endfor %}
                 </select>
+                {{ form.commune_name }}
                 {% if form.commune.errors %}<p class="text-red-500 text-xs mt-1">{{ form.commune.errors.0 }}</p>{% endif %}
               </div>
               <!-- Village -->
               <div>
                 <label class="block text-xs text-slate-500 mb-1">Village</label>
-                <select name="village" id="village-select" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" required>
+                <select name="village" id="village-select" data-selected="{{ form.village.value|default:'' }}" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500" required>
                   <option value="">Select Village</option>
-                  {% for vill in form.fields.village.queryset %}
-                    <option value="{{ vill.id }}" data-commune="{{ vill.commune_id }}" {% if form.village.value == vill.id|stringformat:"i" %}selected{% endif %}>{{ vill.name }}</option>
-                  {% endfor %}
                 </select>
+                {{ form.village_name }}
                 {% if form.village.errors %}<p class="text-red-500 text-xs mt-1">{{ form.village.errors.0 }}</p>{% endif %}
               </div>
             </div>
@@ -543,12 +535,41 @@
   const districtSelect = document.getElementById('district-select');
   const communeSelect = document.getElementById('commune-select');
   const villageSelect = document.getElementById('village-select');
+  const provinceNameInput = document.getElementById('id_province_name');
+  const districtNameInput = document.getElementById('id_district_name');
+  const communeNameInput = document.getElementById('id_commune_name');
+  const villageNameInput = document.getElementById('id_village_name');
   const addressDetailInput = document.querySelector('input[name="address_detail"]');
   const addressTextarea = document.querySelector('textarea[name="address"]');
 
   // Clear child selects
   function clearSelect(select, defaultText) {
     select.innerHTML = `<option value="">${defaultText}</option>`;
+  }
+
+  function setSelectedName(select, input) {
+    const option = select.options[select.selectedIndex];
+    input.value = option?.dataset.name || '';
+  }
+
+  function addOptions(select, items, selectedValue = '') {
+    items.forEach(item => {
+      const option = document.createElement('option');
+      option.value = item.id;
+      option.textContent = item.name_other || item.name;
+      option.dataset.name = item.name;
+      select.appendChild(option);
+    });
+    if (selectedValue) select.value = selectedValue;
+  }
+
+  async function loadOptions(url, select, selectedValue = '') {
+    const response = await fetch(url);
+    const payload = await response.json();
+    if (!response.ok || !payload.success || !Array.isArray(payload.data)) {
+      throw new Error(payload.message || 'Unable to load addresses.');
+    }
+    addOptions(select, payload.data, selectedValue);
   }
 
   // Update full address preview
@@ -569,109 +590,95 @@
     addressTextarea.value = parts.join(', ');
   }
 
-  // Province change -> load districts
-  provinceSelect.addEventListener('change', async function() {
-    const provinceId = this.value;
+  async function loadDistricts(provinceId, selectedValue = '') {
     clearSelect(districtSelect, 'Select District');
     clearSelect(communeSelect, 'Select Commune');
     clearSelect(villageSelect, 'Select Village');
-    updateFullAddress();
-    
-    if (!provinceId) return;
-    
+    districtNameInput.value = '';
+    communeNameInput.value = '';
+    villageNameInput.value = '';
+    if (provinceId) {
+      await loadOptions(`/api/usp-addresses/provinces/${encodeURIComponent(provinceId)}/districts/`, districtSelect, selectedValue);
+    }
+  }
+
+  async function loadCommunes(districtId, selectedValue = '') {
+    clearSelect(communeSelect, 'Select Commune');
+    clearSelect(villageSelect, 'Select Village');
+    communeNameInput.value = '';
+    villageNameInput.value = '';
+    if (districtId) {
+      await loadOptions(`/api/usp-addresses/districts/${encodeURIComponent(districtId)}/communes/`, communeSelect, selectedValue);
+    }
+  }
+
+  async function loadVillages(communeId, selectedValue = '') {
+    clearSelect(villageSelect, 'Select Village');
+    villageNameInput.value = '';
+    if (communeId) {
+      await loadOptions(`/api/usp-addresses/communes/${encodeURIComponent(communeId)}/villages/`, villageSelect, selectedValue);
+    }
+  }
+
+  provinceSelect.addEventListener('change', async function() {
     try {
-      const response = await fetch(`/api/addresses/provinces/${provinceId}/districts/`);
-      const data = await response.json();
-      
-      if (data.success && data.data) {
-        data.data.forEach(district => {
-          const option = document.createElement('option');
-          option.value = district.id;
-          option.textContent = district.name;
-          districtSelect.appendChild(option);
-        });
-      }
+      setSelectedName(provinceSelect, provinceNameInput);
+      await loadDistricts(this.value);
     } catch (error) {
       console.error('Failed to load districts:', error);
     }
+    updateFullAddress();
   });
 
-  // District change -> load communes
   districtSelect.addEventListener('change', async function() {
-    const districtId = this.value;
-    clearSelect(communeSelect, 'Select Commune');
-    clearSelect(villageSelect, 'Select Village');
-    updateFullAddress();
-    
-    if (!districtId) return;
-    
     try {
-      const response = await fetch(`/api/addresses/districts/${districtId}/communes/`);
-      const data = await response.json();
-      
-      if (data.success && data.data) {
-        data.data.forEach(commune => {
-          const option = document.createElement('option');
-          option.value = commune.id;
-          option.textContent = commune.name;
-          communeSelect.appendChild(option);
-        });
-      }
+      setSelectedName(districtSelect, districtNameInput);
+      await loadCommunes(this.value);
     } catch (error) {
       console.error('Failed to load communes:', error);
     }
+    updateFullAddress();
   });
 
-  // Commune change -> load villages
   communeSelect.addEventListener('change', async function() {
-    const communeId = this.value;
-    clearSelect(villageSelect, 'Select Village');
-    updateFullAddress();
-    
-    if (!communeId) return;
-    
     try {
-      const response = await fetch(`/api/addresses/communes/${communeId}/villages/`);
-      const data = await response.json();
-      
-      if (data.success && data.data) {
-        data.data.forEach(village => {
-          const option = document.createElement('option');
-          option.value = village.id;
-          option.textContent = village.name;
-          villageSelect.appendChild(option);
-        });
-      }
+      setSelectedName(communeSelect, communeNameInput);
+      await loadVillages(this.value);
     } catch (error) {
       console.error('Failed to load villages:', error);
     }
+    updateFullAddress();
   });
 
-  // Village change -> update full address
-  villageSelect.addEventListener('change', updateFullAddress);
+  villageSelect.addEventListener('change', function() {
+    setSelectedName(villageSelect, villageNameInput);
+    updateFullAddress();
+  });
   addressDetailInput.addEventListener('input', updateFullAddress);
 
-  // Initialize cascading for edit mode (if values are pre-selected)
+  // Load provinces and restore a failed submission, if there is one.
   async function initCascading() {
-    const selectedProvince = provinceSelect.value;
+    const selectedProvince = provinceSelect.dataset.selected;
     const selectedDistrict = districtSelect.dataset.selected;
     const selectedCommune = communeSelect.dataset.selected;
     const selectedVillage = villageSelect.dataset.selected;
-    
+    try {
+      await loadOptions('/api/usp-addresses/provinces/', provinceSelect, selectedProvince);
+    } catch (error) {
+      console.error('Failed to load provinces:', error);
+      return;
+    }
     if (selectedProvince) {
-      // Load districts for selected province
-      await provinceSelect.dispatchEvent(new Event('change'));
-      
+      setSelectedName(provinceSelect, provinceNameInput);
+      await loadDistricts(selectedProvince, selectedDistrict);
       if (selectedDistrict) {
-        districtSelect.value = selectedDistrict;
-        await districtSelect.dispatchEvent(new Event('change'));
-        
+        setSelectedName(districtSelect, districtNameInput);
+        await loadCommunes(selectedDistrict, selectedCommune);
         if (selectedCommune) {
-          communeSelect.value = selectedCommune;
-          await communeSelect.dispatchEvent(new Event('change'));
-          
+          setSelectedName(communeSelect, communeNameInput);
+          await loadVillages(selectedCommune, selectedVillage);
           if (selectedVillage) {
-            villageSelect.value = selectedVillage;
+            setSelectedName(villageSelect, villageNameInput);
             updateFullAddress();
           }
         }
@@ -679,9 +686,6 @@
     }
   }
   
-  // Run initialization on page load
-  if (provinceSelect.value) {
-    initCascading();
-  }
+  initCascading();
 </script>
 {% endblock %}
