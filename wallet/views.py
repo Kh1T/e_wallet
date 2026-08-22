@@ -3219,17 +3219,14 @@ class ProvinceListView(View):
 
 
 class DistrictListView(View):
-    """GET /api/address/districts/?province_id=X — List districts by province."""
+    """GET /api/addresses/provinces/{province_id}/districts/ — List districts by province."""
     
-    def get(self, request):
+    def get(self, request, province_id):
         from .models import District
-        province_id = request.GET.get('province_id')
-        
-        queryset = District.objects.filter(is_active=True)
-        if province_id:
-            queryset = queryset.filter(province_id=province_id)
-        
-        districts = queryset.values('id', 'code', 'name', 'name_other', 'province_id').order_by('code')
+        districts = District.objects.filter(
+            province_id=province_id, 
+            is_active=True
+        ).values('id', 'code', 'name', 'name_other', 'province_id').order_by('code')
         return JsonResponse({
             'success': True,
             'data': list(districts)
@@ -3237,17 +3234,14 @@ class DistrictListView(View):
 
 
 class CommuneListView(View):
-    """GET /api/address/communes/?district_id=X — List communes by district."""
+    """GET /api/addresses/districts/{district_id}/communes/ — List communes by district."""
     
-    def get(self, request):
+    def get(self, request, district_id):
         from .models import Commune
-        district_id = request.GET.get('district_id')
-        
-        queryset = Commune.objects.filter(is_active=True)
-        if district_id:
-            queryset = queryset.filter(district_id=district_id)
-        
-        communes = queryset.values('id', 'code', 'name', 'name_other', 'district_id').order_by('code')
+        communes = Commune.objects.filter(
+            district_id=district_id,
+            is_active=True
+        ).values('id', 'code', 'name', 'name_other', 'district_id').order_by('code')
         return JsonResponse({
             'success': True,
             'data': list(communes)
@@ -3255,17 +3249,14 @@ class CommuneListView(View):
 
 
 class VillageListView(View):
-    """GET /api/address/villages/?commune_id=X — List villages by commune."""
+    """GET /api/addresses/communes/{commune_id}/villages/ — List villages by commune."""
     
-    def get(self, request):
+    def get(self, request, commune_id):
         from .models import Village
-        commune_id = request.GET.get('commune_id')
-        
-        queryset = Village.objects.filter(is_active=True)
-        if commune_id:
-            queryset = queryset.filter(commune_id=commune_id)
-        
-        villages = queryset.values('id', 'code', 'name', 'name_other', 'commune_id').order_by('code')
+        villages = Village.objects.filter(
+            commune_id=commune_id,
+            is_active=True
+        ).values('id', 'code', 'name', 'name_other', 'commune_id').order_by('code')
         return JsonResponse({
             'success': True,
             'data': list(villages)

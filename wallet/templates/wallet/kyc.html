@@ -580,7 +580,7 @@
     if (!provinceId) return;
     
     try {
-      const response = await fetch(`/api/address/districts/?province_id=${provinceId}`);
+      const response = await fetch(`/api/addresses/provinces/${provinceId}/districts/`);
       const data = await response.json();
       
       if (data.success && data.data) {
@@ -606,7 +606,7 @@
     if (!districtId) return;
     
     try {
-      const response = await fetch(`/api/address/communes/?district_id=${districtId}`);
+      const response = await fetch(`/api/addresses/districts/${districtId}/communes/`);
       const data = await response.json();
       
       if (data.success && data.data) {
@@ -631,7 +631,7 @@
     if (!communeId) return;
     
     try {
-      const response = await fetch(`/api/address/villages/?commune_id=${communeId}`);
+      const response = await fetch(`/api/addresses/communes/${communeId}/villages/`);
       const data = await response.json();
       
       if (data.success && data.data) {
