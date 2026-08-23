@@ -65,6 +65,7 @@ SESSION_COOKIE_SECURE = False  # Set to True in production with HTTPS
 # Application definition
 
 INSTALLED_APPS = [
+    'jazzmin',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -212,3 +213,108 @@ BAKONG_MERCHANT_CITY = os.getenv('BAKONG_MERCHANT_CITY', '')
 # Bakong's production API base URL.  Set this to
 # https://sit-api-bakong.nbc.gov.kh when using a SIT token.
 BAKONG_API_URL = os.getenv('BAKONG_API_URL', 'https://api-bakong.nbc.gov.kh')
+
+# ── Django Jazzmin Configuration ───────────────────────────────────
+JAZZMIN_SETTINGS = {
+    "site_title": "E-Wallet Admin",
+    "site_header": "E-Wallet",
+    "site_brand": "E-Wallet",
+    "site_icon": "fas fa-wallet",
+    "site_logo": None,
+    "welcome_sign": "Welcome to E-Wallet Admin",
+    "copyright": "E-Wallet Payment System",
+    "search_model": ["wallet.User", "wallet.Transaction", "wallet.Wallet"],
+    "user_avatar": None,
+    "topmenu_links": [
+        {"name": "Dashboard", "url": "admin:index", "permissions": ["auth.view_user"]},
+        {"name": "API", "url": "/", "new_window": True},
+    ],
+    "usermenu_links": [
+        {"name": "Support", "url": "https://github.com/farridav/django-jazzmin/issues", "new_window": True},
+    ],
+    "show_sidebar": True,
+    "navigation_expanded": True,
+    "hide_apps": [],
+    "hide_models": [],
+    "order_with_respect_to": ["wallet", "auth"],
+    "custom_links": {
+        "wallet": [{
+            "name": "View Site",
+            "url": "/",
+            "icon": "fas fa-external-link-alt",
+            "permissions": ["wallet.view_user"]
+        }]
+    },
+    "icons": {
+        "auth": "fas fa-users-cog",
+        "auth.user": "fas fa-user",
+        "auth.Group": "fas fa-users",
+        "wallet.User": "fas fa-user",
+        "wallet.Wallet": "fas fa-wallet",
+        "wallet.Transaction": "fas fa-exchange-alt",
+        "wallet.Transfer": "fas fa-paper-plane",
+        "wallet.Merchant": "fas fa-store",
+        "wallet.Biller": "fas fa-file-invoice",
+        "wallet.Notification": "fas fa-bell",
+        "wallet.IdentityVerification": "fas fa-id-card",
+        "wallet.Security": "fas fa-shield-alt",
+        "wallet.TransactionLimit": "fas fa-sliders-h",
+        "wallet.AuditLog": "fas fa-clipboard-list",
+        "wallet.Topup": "fas fa-plus-circle",
+        "wallet.Withdrawal": "fas fa-minus-circle",
+        "wallet.BillPayment": "fas fa-file-invoice-dollar",
+        "wallet.MerchantQR": "fas fa-qrcode",
+        "wallet.BakongPayment": "fas fa-credit-card",
+        "wallet.FraudDetection": "fas fa-user-secret",
+        "wallet.Province": "fas fa-map-marker-alt",
+        "wallet.District": "fas fa-map",
+        "wallet.Commune": "fas fa-city",
+        "wallet.Village": "fas fa-home",
+    },
+    "default_icon_parents": "fas fa-chevron-circle-right",
+    "default_icon_children": "fas fa-circle",
+    "related_modal_active": False,
+    "custom_css": None,
+    "custom_js": None,
+    "use_google_fonts_cdn": True,
+    "show_ui_builder": True,
+    "changeform_format": "horizontal_tabs",
+    "changeform_format_overrides": {
+        "auth.user": "collapsible",
+        "auth.group": "vertical_tabs",
+    },
+    "language_chooser": False,
+}
+
+JAZZMIN_UI_TWEAKS = {
+    "navbar_small_text": False,
+    "footer_small_text": False,
+    "body_small_text": False,
+    "brand_small_text": False,
+    "brand_colour": False,
+    "accent": "accent-primary",
+    "navbar": "navbar-dark",
+    "no_navbar_border": False,
+    "navbar_fixed": False,
+    "layout_boxed": False,
+    "footer_fixed": False,
+    "sidebar_fixed": True,
+    "sidebar": "sidebar-dark-primary",
+    "sidebar_nav_small_text": False,
+    "sidebar_disable_expand": False,
+    "sidebar_nav_child_indent": True,
+    "sidebar_nav_compact_style": False,
+    "sidebar_nav_legacy_style": False,
+    "sidebar_nav_flat_style": False,
+    "theme": "darkly",
+    "dark_mode_theme": "darkly",
+    "button_classes": {
+        "primary": "btn-primary",
+        "secondary": "btn-secondary",
+        "info": "btn-info",
+        "warning": "btn-warning",
+        "danger": "btn-danger",
+        "success": "btn-success"
+    },
+    "actions_sticky_top": False,
+}

@@ -702,26 +702,12 @@ class TransactionLimitAdmin(admin.ModelAdmin):
 
 
 # ─────────────────────────────────────────────
-#  CUSTOM ADMIN DASHBOARD
+#  CUSTOM ADMIN DASHBOARD (Jazzmin Compatible)
 # ─────────────────────────────────────────────
 from django.template.response import TemplateResponse
 
 
-class DashboardAdminSite(admin.AdminSite):
-    """Custom Admin Site with Dashboard."""
-    
-    def get_urls(self):
-        urls = super().get_urls()
-        custom_urls = [
-            path('dashboard/', self.admin_view(self.dashboard_view), name='admin_dashboard'),
-        ]
-        return custom_urls + urls
-    
-    def index(self, request, extra_context=None):
-        """Override index to redirect to dashboard."""
-        return self.dashboard_view(request)
-    
-    def dashboard_view(self, request):
+def admin_dashboard_view(request):
         """Admin Dashboard with Statistics and Financial Reports."""
         # Date ranges
         today = timezone.now().date()
@@ -858,19 +844,40 @@ class DashboardAdminSite(admin.AdminSite):
             'top_users': top_users,
             'currency_distribution': currency_distribution,
             
-            'has_permission': self.has_permission(request),
-            'site_title': self.site_title,
-            'site_header': self.site_header,
+            'has_permission': admin.site.has_permission(request),
+            'site_title': admin.site.site_title,
+            'site_header': admin.site.site_header,
         }
         
         return TemplateResponse(request, 'admin/dashboard.html', context)
 
 
-# Create custom admin site
-custom_admin_site = DashboardAdminSite(name='admin')
+# ── Custom Admin Site with Dashboard ─────────────────────────────
+from django.contrib.admin import AdminSite
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import never_cache
 
-# Re-register all models with custom admin
-# Use the model's admin class from the default site
+
+class JazzminDashboardAdminSite(AdminSite):
+    """Custom Admin Site that uses Jazzmin templates but with custom dashboard."""
+    
+    @method_decorator(never_cache)
+    def index(self, request, extra_context=None):
+        """Override index to show custom dashboard."""
+        return admin_dashboard_view(request)
+    
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path('dashboard/', self.admin_view(admin_dashboard_view), name='admin_dashboard'),
+        ]
+        return custom_urls + urls
+
+
+# Create custom admin site instance
+custom_admin_site = JazzminDashboardAdminSite(name='admin')
+
+# Re-register all models with custom admin site
 for model, admin_instance in list(admin.site._registry.items()):
     try:
         custom_admin_site.register(model, admin_instance.__class__)
