@@ -845,8 +845,8 @@ def admin_dashboard_view(request):
             'currency_distribution': currency_distribution,
             
             'has_permission': admin.site.has_permission(request),
-            'site_title': admin.site.site_title,
-            'site_header': admin.site.site_header,
+            'site_title': admin.site.site_title or 'Admin',
+            'site_header': admin.site.site_header or 'Administration',
         }
         
         return TemplateResponse(request, 'admin/dashboard.html', context)
@@ -860,6 +860,9 @@ from django.views.decorators.cache import never_cache
 
 class JazzminDashboardAdminSite(AdminSite):
     """Custom Admin Site that uses Jazzmin templates but with custom dashboard."""
+    site_title = 'E-Wallet Admin'
+    site_header = 'E-Wallet Administration'
+    index_title = 'Dashboard'
     
     @method_decorator(never_cache)
     def index(self, request, extra_context=None):

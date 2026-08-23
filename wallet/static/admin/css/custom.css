@@ -1,0 +1,232 @@
+/* Hide sidebar toggle hamburger button on desktop */
+@media (min-width: 992px) {
+    a.nav-link[data-widget="pushmenu"],
+    a[data-widget="pushmenu"],
+    .sidebar-toggle,
+    .main-header .sidebar-toggle,
+    .navbar-nav .sidebar-toggle,
+    .nav-item.sidebar-toggle,
+    .btn[data-widget="pushmenu"] {
+        display: none !important;
+    }
+
+    a.nav-link i.fa-bars,
+    a.nav-link i.fas.fa-bars,
+    .sidebar-toggle i.fa-bars {
+        display: none !important;
+    }
+}
+
+/* Show toggle button on mobile */
+@media (max-width: 991.98px) {
+    a.nav-link[data-widget="pushmenu"],
+    .sidebar-toggle {
+        display: block !important;
+    }
+}
+
+/* ==========================================
+   RESPONSIVE CONTENT WIDTH
+   ========================================== */
+
+/* Large screens (desktop): sidebar expanded */
+@media (min-width: 1200px) {
+    .main-sidebar {
+        width: 250px !important;
+        transform: translateX(0) !important;
+    }
+    
+    .content-wrapper {
+        margin-left: 250px !important;
+    }
+}
+
+/* Medium screens (tablet): sidebar collapsed */
+@media (min-width: 992px) and (max-width: 1199.98px) {
+    .main-sidebar {
+        width: 4.6rem !important;
+        overflow: hidden !important;
+    }
+    
+    .main-sidebar:hover {
+        width: 250px !important;
+    }
+    
+    .content-wrapper {
+        margin-left: 4.6rem !important;
+    }
+}
+
+/* Small screens (mobile): sidebar hidden by default */
+@media (max-width: 991.98px) {
+    .main-sidebar {
+        width: 250px !important;
+        transform: translateX(-250px) !important;
+        transition: transform 0.3s ease-in-out !important;
+    }
+    
+    .main-sidebar.open,
+    body.sidebar-open .main-sidebar {
+        transform: translateX(0) !important;
+    }
+    
+    .content-wrapper {
+        margin-left: 0 !important;
+        transition: margin-left 0.3s ease-in-out !important;
+    }
+    
+    body.sidebar-open .content-wrapper {
+        margin-left: 250px !important;
+    }
+}
+
+/* Extra small screens */
+@media (max-width: 767.98px) {
+    .content-wrapper .container-fluid {
+        padding-left: 10px !important;
+        padding-right: 10px !important;
+    }
+    
+    .content-header h1 {
+        font-size: 1.5rem !important;
+    }
+}
+
+/* ==========================================
+   UI BUILDER (CONTROL SIDEBAR) STYLING
+   ========================================== */
+
+/* The UI Builder toggle button (th icon) */
+.control-sidebar-btn,
+a[data-slide="true"],
+.main-header .control-sidebar-btn {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem 1rem;
+    color: rgba(255, 255, 255, 0.8);
+    cursor: pointer;
+    transition: color 0.3s;
+}
+
+.control-sidebar-btn:hover,
+a[data-slide="true"]:hover {
+    color: #fff;
+}
+
+.control-sidebar-btn i,
+a[data-slide="true"] i {
+    font-size: 1.1rem;
+}
+
+/* The control sidebar panel itself */
+.control-sidebar {
+    position: fixed;
+    top: 0;
+    right: -300px;
+    width: 300px;
+    height: 100vh;
+    background: #343a40;
+    z-index: 1040;
+    transition: right 0.3s ease-in-out;
+    overflow-y: auto;
+    padding: 1rem;
+    box-shadow: -2px 0 10px rgba(0, 0, 0, 0.3);
+}
+
+/* When open */
+.control-sidebar.control-sidebar-open,
+.control-sidebar.open {
+    right: 0;
+}
+
+/* Control sidebar content */
+.control-sidebar h5,
+.control-sidebar h6 {
+    color: #fff;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid #495057;
+    padding-bottom: 0.5rem;
+}
+
+.control-sidebar .form-group {
+    margin-bottom: 1rem;
+}
+
+.control-sidebar label {
+    color: #adb5bd;
+    font-size: 0.875rem;
+}
+
+.control-sidebar select,
+.control-sidebar input {
+    background: #495057;
+    border: 1px solid #6c757d;
+    color: #fff;
+}
+
+.control-sidebar select:focus,
+.control-sidebar input:focus {
+    background: #495057;
+    border-color: #80bdff;
+    color: #fff;
+}
+
+/* Dark mode specific */
+.control-sidebar-dark {
+    background: #212529;
+}
+
+.control-sidebar-dark h5,
+.control-sidebar-dark h6 {
+    color: #f8f9fa;
+}
+
+/* UI Customiser specific */
+.ui-customiser .customizer-item {
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #495057;
+}
+
+.ui-customiser .customizer-item:last-child {
+    border-bottom: none;
+}
+
+/* Ensure the UI builder button is visible in navbar */
+.navbar-nav .nav-item.control-sidebar-btn {
+    display: flex !important;
+}
+
+/* ==========================================
+   BREADCRUMB PADDING
+   ========================================== */
+.content-header .breadcrumb,
+.breadcrumb {
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+}
+
+/* ==========================================
+   FILTER DROPDOWN - STYLE ALL OPTION & SEPARATOR
+   ========================================== */
+
+/* Style the "All (default)" option */
+select option[value=""]:first-child {
+    font-weight: bold;
+    color: #28a745;
+}
+
+/* Style the separator line */
+select option:disabled,
+select option[value=""]:nth-child(2) {
+    color: #6c757d;
+    font-size: 0.75rem;
+    background: transparent;
+    pointer-events: none;
+}
+
+/* Hide options with empty values that are not our custom ones */
+select option[value=""]:not(:first-child):not(:nth-child(2)) {
+    display: none !important;
+}

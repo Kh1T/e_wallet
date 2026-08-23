@@ -1,11 +1,7 @@
-{% extends "admin/base_site.html" %}
+{% extends "admin/base.html" %}
 {% load static %}
 
-{% block title %}{{ title }} | {{ site_title }}{% endblock %}
-
-{% block branding %}
-<h1 id="site-name"><a href="{% url 'admin:index' %}">{{ site_header }}</a></h1>
-{% endblock %}
+{% block title %}{{ title }} | {{ site_title|default:"Admin" }}{% endblock %}
 
 {% block extrastyle %}
 <style>
@@ -42,12 +38,40 @@
     --dashboard-danger-border: #754040;
   }
 
-  #content {
+  /* Content wrapper for Jazzmin compatibility */
+  .content-wrapper .dashboard-container {
     padding: 20px;
   }
-  .dashboard-container {
-    padding: 0;
+  
+  /* Fix sidebar toggle layout issues */
+  .content-wrapper {
+    min-height: 100%;
+    background-color: var(--body-bg, #f4f6f9);
   }
+  
+  /* Ensure proper transition when sidebar toggles */
+  .content-wrapper,
+  .main-sidebar {
+    transition: margin-left 0.3s ease-in-out, width 0.3s ease-in-out;
+  }
+  
+  /* Fix gap when sidebar is collapsed */
+  body.sidebar-collapse .content-wrapper {
+    margin-left: 4.6rem !important;
+  }
+  
+  body:not(.sidebar-collapse) .content-wrapper {
+    margin-left: 250px !important;
+  }
+  
+  /* Mobile: no margin when sidebar is hidden */
+  @media (max-width: 991.98px) {
+    body .content-wrapper {
+      margin-left: 0 !important;
+    }
+  }
+  
+  .dashboard-container {
   .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -260,8 +284,10 @@
     color: var(--dashboard-text-soft);
     margin-top: 5px;
   }
+  
+  /* Mobile responsive */
   @media (max-width: 767px) {
-    #content {
+    .content-wrapper .dashboard-container {
       padding: 12px;
     }
     .charts-container {
