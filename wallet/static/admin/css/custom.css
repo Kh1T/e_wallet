@@ -206,27 +206,3 @@ a[data-slide="true"] i {
     padding-left: 0.5rem !important;
     padding-right: 0.5rem !important;
 }
-
-/* ==========================================
-   FILTER DROPDOWN - STYLE ALL OPTION & SEPARATOR
-   ========================================== */
-
-/* Style the "All (default)" option */
-select option[value=""]:first-child {
-    font-weight: bold;
-    color: #28a745;
-}
-
-/* Style the separator line */
-select option:disabled,
-select option[value=""]:nth-child(2) {
-    color: #6c757d;
-    font-size: 0.75rem;
-    background: transparent;
-    pointer-events: none;
-}
-
-/* Hide options with empty values that are not our custom ones */
-select option[value=""]:not(:first-child):not(:nth-child(2)) {
-    display: none !important;
-}
