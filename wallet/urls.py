@@ -68,6 +68,7 @@ urlpatterns = [
     # ── Transfer API endpoints ──────────────────────────────────────
     path('api/transfers/p2p/',        views.PeerToPeerTransferView.as_view(), name='p2p-transfer'),
     path('api/transfers/history/',    views.TransferHistoryView.as_view(),    name='transfer-history'),
+    path('api/wallets/check/',        views.CheckWalletExistsView.as_view(),  name='wallet-check'),
 
     # ── Admin API endpoints ─────────────────────────────────────────
     path('api/admin/transactions/',         views.AdminAllTransactionsView.as_view(),   name='admin-transactions'),

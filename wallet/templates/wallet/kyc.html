@@ -218,15 +218,15 @@
                   </div>
                 </div>
 
-                <div class="relative bg-black rounded-xl overflow-hidden" style="min-height: 300px;">
-                  <video id="camera-video" class="w-full h-auto max-h-[400px]" autoplay playsinline></video>
+                <div class="relative bg-black rounded-xl overflow-hidden aspect-[4/3] max-h-[400px]">
+                  <video id="camera-video" class="w-full h-full object-cover" autoplay playsinline></video>
                   <canvas id="camera-canvas" class="hidden"></canvas>
                   <div id="camera-placeholder" class="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-800">
                     <svg xmlns="http://www.w3.org/2000/svg" class="w-16 h-16 mb-2 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
                     <p class="text-sm opacity-75 mb-2">Camera preview will appear here</p>
                     <p class="text-xs opacity-50 text-center px-4">Click "Start Camera" to begin, or switch to "Upload File" if camera doesn't work</p>
                   </div>
-                  <img id="captured-photo" class="hidden w-full h-auto max-h-[400px]" alt="Captured selfie">
+                  <img id="captured-photo" class="hidden w-full h-full object-cover" alt="Captured selfie">
                 </div>
                 
                 <div class="flex gap-3">

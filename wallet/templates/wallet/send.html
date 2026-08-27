@@ -83,6 +83,22 @@
                class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:border-blue-500 focus:ring-blue-500 {% if not kyc_verified or not has_pin %}bg-slate-100 cursor-not-allowed{% endif %}"
                {% if not kyc_verified or not has_pin %}disabled{% endif %}>
         {% if form.recipient_wallet.errors %}<p class="text-red-500 text-xs mt-1">{{ form.recipient_wallet.errors.0 }}</p>{% endif %}
+        
+        <!-- Wallet Check Result Display -->
+        <div id="wallet-check-result" class="mt-2 hidden">
+          <div id="wallet-check-success" class="hidden flex items-center gap-2 text-emerald-600 text-sm">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>
+            <span id="wallet-check-message"></span>
+          </div>
+          <div id="wallet-check-error" class="hidden flex items-center gap-2 text-red-500 text-sm">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+            <span id="wallet-check-error-message"></span>
+          </div>
+          <div id="wallet-check-loading" class="hidden flex items-center gap-2 text-slate-500 text-sm">
+            <svg class="animate-spin w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+            <span>Checking wallet...</span>
+          </div>
+        </div>
       </div>
 
       <div>
@@ -458,5 +474,116 @@
       openPinModal();
   });
   {% endif %}
+
+  // Wallet Check Functionality
+  const recipientInput = document.getElementById('recipient-wallet-input');
+  const walletCheckResult = document.getElementById('wallet-check-result');
+  const walletCheckSuccess = document.getElementById('wallet-check-success');
+  const walletCheckError = document.getElementById('wallet-check-error');
+  const walletCheckLoading = document.getElementById('wallet-check-loading');
+  const walletCheckMessage = document.getElementById('wallet-check-message');
+  const walletCheckErrorMessage = document.getElementById('wallet-check-error-message');
+  
+  let walletCheckTimeout = null;
+  let lastCheckedWallet = '';
+
+  function clearWalletCheck() {
+    walletCheckSuccess.classList.add('hidden');
+    walletCheckError.classList.add('hidden');
+    walletCheckLoading.classList.add('hidden');
+    recipientInput.classList.remove('border-emerald-500', 'border-red-500');
+  }
+
+  function showWalletLoading() {
+    clearWalletCheck();
+    walletCheckLoading.classList.remove('hidden');
+    walletCheckResult.classList.remove('hidden');
+  }
+
+  function showWalletSuccess(message) {
+    walletCheckLoading.classList.add('hidden');
+    walletCheckSuccess.classList.remove('hidden');
+    walletCheckMessage.textContent = message;
+    recipientInput.classList.add('border-emerald-500');
+    recipientInput.classList.remove('border-red-500');
+  }
+
+  function showWalletError(message) {
+    walletCheckLoading.classList.add('hidden');
+    walletCheckError.classList.remove('hidden');
+    walletCheckErrorMessage.textContent = message;
+    recipientInput.classList.add('border-red-500');
+    recipientInput.classList.remove('border-emerald-500');
+  }
+
+  async function checkWalletExists(walletNumber) {
+    if (!walletNumber || walletNumber.length < 5) {
+      clearWalletCheck();
+      walletCheckResult.classList.add('hidden');
+      return;
+    }
+
+    // Don't check if same as last check
+    if (walletNumber === lastCheckedWallet) return;
+    
+    showWalletLoading();
+    
+    try {
+      const response = await fetch('/api/wallets/check/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        },
+        body: JSON.stringify({ wallet_number: walletNumber })
+      });
+      
+      const data = await response.json();
+      lastCheckedWallet = walletNumber;
+      
+      if (response.ok && data.exists) {
+        if (data.is_own_wallet) {
+          showWalletError('This is your own wallet. Please enter a different wallet number.');
+        } else {
+          showWalletSuccess(data.message || `Wallet found: ${data.owner_name}`);
+        }
+      } else {
+        showWalletError(data.message || 'Wallet number not found.');
+      }
+    } catch (error) {
+      console.error('Wallet check error:', error);
+      showWalletError('Unable to verify wallet. Please try again.');
+    }
+  }
+
+  // Debounced input listener
+  if (recipientInput) {
+    recipientInput.addEventListener('input', function() {
+      const walletNumber = this.value.trim();
+      
+      // Clear previous timeout
+      if (walletCheckTimeout) {
+        clearTimeout(walletCheckTimeout);
+      }
+      
+      // Reset last checked if input changed
+      if (walletNumber !== lastCheckedWallet) {
+        lastCheckedWallet = '';
+      }
+      
+      // Debounce the check
+      walletCheckTimeout = setTimeout(() => {
+        checkWalletExists(walletNumber);
+      }, 500); // Wait 500ms after user stops typing
+    });
+    
+    // Check immediately on blur if valid length
+    recipientInput.addEventListener('blur', function() {
+      const walletNumber = this.value.trim();
+      if (walletNumber && walletNumber.length >= 5 && walletNumber !== lastCheckedWallet) {
+        checkWalletExists(walletNumber);
+      }
+    });
+  }
 </script>
 {% endblock %}

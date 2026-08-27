@@ -2417,6 +2417,65 @@ class TransferHistoryView(APIView):
         })
 
 
+class CheckWalletExistsView(APIView):
+    """
+    POST /api/wallets/check/
+    Check if a wallet/account number exists.
+    Returns wallet owner info if found.
+    
+    Request body:
+      - wallet_number: The wallet number to check (e.g., W1000001)
+    
+    Response:
+      - exists: boolean
+      - wallet_number: string (if exists)
+      - owner_name: string (if exists)
+      - currency: string (if exists)
+      - message: string
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        wallet_number = request.data.get('wallet_number', '').strip()
+        
+        if not wallet_number:
+            return Response({
+                'exists': False,
+                'message': 'Wallet number is required.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            wallet = Wallet.objects.select_related('user').get(wallet_number=wallet_number)
+            
+            # Don't allow sending to own wallet
+            if wallet.user == request.user:
+                return Response({
+                    'exists': True,
+                    'is_own_wallet': True,
+                    'wallet_number': wallet.wallet_number,
+                    'owner_name': wallet.user.full_name,
+                    'currency': wallet.currency,
+                    'message': 'This is your own wallet.'
+                })
+            
+            return Response({
+                'exists': True,
+                'is_own_wallet': False,
+                'wallet_number': wallet.wallet_number,
+                'owner_name': wallet.user.full_name,
+                'currency': wallet.currency,
+                'message': f'Wallet found: {wallet.user.full_name}'
+            })
+            
+        except Wallet.DoesNotExist:
+            return Response({
+                'exists': False,
+                'is_own_wallet': False,
+                'wallet_number': wallet_number,
+                'message': 'Wallet number not found.'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+
 class AdminRequiredPermission(IsAuthenticated):
     """Permission class that checks if user is admin/staff."""
     def has_permission(self, request, view):
