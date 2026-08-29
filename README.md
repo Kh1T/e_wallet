@@ -1,96 +1,85 @@
-# e_wallet
+# E-Wallet Project
 
-A Django wallet application built with Django REST Framework and Tailwind CSS.
+A Django 6 e-wallet application using Django REST Framework, JWT authentication, PostgreSQL, and Tailwind CSS.
 
-## Prerequisites
+## Requirements
 
-- Python 3.10+ installed
+- Python 3.12 or newer
+- PostgreSQL 18 or newer
 - Git (optional)
-- Optional: PostgreSQL if you want to use a remote database via `DATABASE_URL`
 
-## Setup
+## Install
 
-1. Open a terminal in the project root:
-   - Windows PowerShell:
-     ```powershell
-     cd C:\Users\Admin\Documents\BIU_Y3\S1\System_Analysis_Class\assignment\e_wallet
-     ```
-   - macOS / Linux:
-     ```bash
-     cd ~/Documents/BIU_Y3/S1/System_Analysis_Class/assignment/e_wallet
-     ```
+From the project root, create a virtual environment and install the dependencies:
 
-2. Create and activate a virtual environment (if not already activated):
-   - Windows PowerShell:
-     ```powershell
-     python -m venv venv
-     .\venv\Scripts\Activate.ps1
-     ```
-   - macOS / Linux:
-     ```bash
-     python3 -m venv venv
-     source venv/bin/activate
-     ```
+```bash
+python3 -m venv venv
+source venv/bin/activate
+python -m pip install -r requirements.txt
+```
 
-3. Install dependencies:
-   - Windows / macOS / Linux:
-     ```bash
-     pip install django djangorestframework djangorestframework-simplejwt dj-database-url python-dotenv psycopg2-binary
-     ```
+Copy the environment template and replace any service credentials needed by the features you use:
 
-   If you prefer, create a `requirements.txt` file with these packages and install with:
-   ```bash
-   pip install -r requirements.txt
-   ```
+```bash
+cp .env.example .env
+```
 
-4. Configure environment variables (optional):
+Never commit real passwords, tokens, or API keys from `.env`.
 
-   - The project will use SQLite by default via `db.sqlite3`.
-   - To use PostgreSQL or another database, create a `.env` file in the project root with:
-     ```dotenv
-     DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/DBNAME
-     ```
+## Create the PostgreSQL 18 database
 
-## Database setup
+On macOS with Homebrew:
 
-Run migrations:
+```bash
+brew services start postgresql@18
+psql -X -v ON_ERROR_STOP=1 -d postgres -f PGSQL/Bunly/DB.sql
+```
 
-```powershell
+Set Django's database connection in `.env`:
+
+```dotenv
+DATABASE_URL=postgresql:///ewallet
+```
+
+The socket URL uses your current local PostgreSQL role and does not store a password. For a password-based or remote connection, use:
+
+```dotenv
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/ewallet
+```
+
+More database options and troubleshooting are in [`PGSQL/Bunly/README.md`](PGSQL/Bunly/README.md).
+
+## Apply migrations
+
+```bash
+source venv/bin/activate
 python manage.py migrate
+python manage.py check
 ```
 
-Create a superuser if you need admin access:
+Migration `wallet.0013_load_cambodia_geography` loads the Cambodia geography data, so the first migration may take a little longer.
 
-```powershell
-python manage.py createsuperuser
-```
+## Run the application
 
-## Run server
-
-Start the local development server:
-
-```powershell
+```bash
+source venv/bin/activate
 python manage.py runserver
 ```
 
-Then open:
+Open <http://127.0.0.1:8000/>. Create an administrator when needed:
 
-```text
-http://127.0.0.1:8000/
+```bash
+python manage.py createsuperuser
 ```
 
-## Notes
+## Common commands
 
-- Tailwind CSS is loaded via CDN in the templates, so no local frontend build step is required.
-- Default login redirect is `/` and logout redirect is `/login/`.
-- If an `.env` file exists, the project loads it using `python-dotenv`.
-- The default database is SQLite, but `dj-database-url` allows switching to a different database with `DATABASE_URL`.
-
-## Helpful commands
-
-```powershell
+```bash
+python manage.py showmigrations
 python manage.py makemigrations
 python manage.py migrate
-python manage.py createsuperuser
+python manage.py test
 python manage.py runserver
 ```
+
+Tailwind CSS is loaded from a CDN, so no local frontend build step is required. When `DATABASE_URL` is missing or empty, the project falls back to `db.sqlite3`.

@@ -27,6 +27,7 @@ media/
 # Local PostgreSQL / database files
 PSQL/
 *.sql
+!PGSQL/Bunly/DB.sql
 *.dump
 *.backup
 

@@ -1,144 +1,119 @@
 # E-Wallet PostgreSQL Setup
 
-This directory contains a complete PostgreSQL export of the Django e-wallet database:
+This project uses **PostgreSQL 18 + Django migrations**.
 
-- `e_wallet_postgresql.sql`
+## 1. Create the Database
 
-The export includes the wallet tables, Django authentication and admin tables, JWT blacklist tables, migrations, constraints, indexes, and Cambodia geography seed data.
+Open pgAdmin 4 and connect to the existing `postgres` database.
 
-## 1. Start PostgreSQL on macOS
+Open **Tools → Query Tool** and run:
 
-If PostgreSQL was installed with Homebrew, start it with:
-
-```bash
-brew services start postgresql
+```sql
+CREATE DATABASE ewallet
+    WITH
+    OWNER = postgres
+    ENCODING = 'UTF8';
 ```
 
-Confirm that PostgreSQL is running:
+> `DB.sql` only creates the `ewallet` database. It does **not** create tables.
 
-```bash
-pg_isready -h localhost -p 5432
+## 2. Configure `.env`
+
+Set your PostgreSQL connection:
+
+```dotenv
+DATABASE_URL=postgresql://postgres:YOUR_POSTGRES_PASSWORD@localhost:5432/ewallet
 ```
 
-Expected output:
+Replace `YOUR_POSTGRES_PASSWORD` with your PostgreSQL password.
 
-```text
-localhost:5432 - accepting connections
-```
+## 3. Run Django Migrations
 
-## 2. Create the database
-
-The project is configured to use the local macOS user `macbook` and database `bunly_wallet`.
-
-```bash
-createdb -h localhost -p 5432 -U macbook bunly_wallet
-```
-
-If the database already exists, PostgreSQL will report an error. Do not delete an existing database unless you are sure its data is no longer needed.
-
-## 3. Import the SQL file
-
-From the project root, run:
+Open Terminal:
 
 ```bash
 cd /Users/macbook/Documents/UC1-IT/Y3-S1/django/ass/e_wallet
-
-psql -X -v ON_ERROR_STOP=1 \
-  -h localhost \
-  -p 5432 \
-  -U macbook \
-  -d bunly_wallet \
-  -f PGSQL/Bunly/e_wallet_postgresql.sql
-```
-
-`ON_ERROR_STOP=1` makes the import stop immediately if PostgreSQL encounters an error.
-
-## 4. Configure Django
-
-The project `.env` file should contain:
-
-```dotenv
-DATABASE_URL=postgresql://macbook@localhost:5432/bunly_wallet
-```
-
-If your PostgreSQL user requires a password, use:
-
-```dotenv
-DATABASE_URL=postgresql://macbook:YOUR_PASSWORD@localhost:5432/bunly_wallet
-```
-
-Replace `YOUR_PASSWORD` with the real password. Do not commit `.env` to Git.
-
-## 5. Verify the import
-
-Check that the wallet tables were created:
-
-```bash
-psql -h localhost -p 5432 -U macbook -d bunly_wallet \
-  -c "SELECT COUNT(*) AS wallet_tables FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'wallet_%';"
-```
-
-The expected result is `26` wallet tables.
-
-Check the Django migration records:
-
-```bash
-psql -h localhost -p 5432 -U macbook -d bunly_wallet \
-  -c "SELECT app, name FROM django_migrations WHERE app = 'wallet' ORDER BY id;"
-```
-
-The result should list wallet migrations `0001` through `0014`.
-
-Run Django's checks:
-
-```bash
 source venv/bin/activate
+python manage.py migrate
+```
+
+Django migrations will create all required tables.
+
+## 4. Check Migration Status
+
+```bash
 python manage.py check
 python manage.py showmigrations
 ```
 
-All migrations should be marked with `[X]`. You do not need to run them again because the SQL export already contains the complete schema and migration history.
+Applied migrations should show:
 
-## 6. Create an administrator
+```text
+[X]
+```
 
-Create a Django administrator account if needed:
+## 5. Create Admin User
+
+To create the prepared administrator and normal customer in pgAdmin:
+
+1. Select the **ewallet** database.
+2. Open **Tools → Query Tool**.
+3. Open `PGSQL/Bunly/user.sql`.
+4. Press **F5**.
+
+The accounts are:
+
+| Type | Login | Password |
+| --- | --- | --- |
+| Administrator | `admin@gmail.com` | `00000000` |
+| Normal customer | `normal@ewallet.local` | `0000` |
+
+Run `user.sql` only after `python manage.py migrate`. It also creates the normal customer's KHR wallet and the security and transaction-limit records for both users. Re-running the script resets the administrator password to `00000000` and the normal customer password to `0000`.
+
+For local development only, these passwords are intentionally simple. Change them before deploying the project.
+
+Alternatively, create an administrator interactively:
 
 ```bash
-source venv/bin/activate
 python manage.py createsuperuser
 ```
 
-## 7. Run the application
+## 6. Run the Project
 
 ```bash
-source venv/bin/activate
 python manage.py runserver
 ```
 
-Open <http://127.0.0.1:8000/> in a browser.
+Open:
 
-## Common errors
-
-### `connection refused`
-
-PostgreSQL is not running. Start it with:
-
-```bash
-brew services start postgresql
+```text
+http://127.0.0.1:8000/
 ```
 
-### `role "macbook" does not exist`
+## Database Workflow
 
-Use your existing PostgreSQL username instead of `macbook` in the commands and `DATABASE_URL`. You can list PostgreSQL roles with:
-
-```bash
-psql postgres -c "\du"
+```text
+DB.sql
+   ↓
+Create ewallet database
+   ↓
+Configure .env
+   ↓
+python manage.py migrate
+   ↓
+Django creates all tables
+   ↓
+python manage.py runserver
 ```
 
-### `database "bunly_wallet" already exists`
+### Important
 
-The database has already been created. If it is empty, continue with the import step. If it contains tables or data, back it up before making changes.
+Do **not** import the old Supabase database.
 
-### `relation already exists`
+Django migration files in:
 
-The SQL export must be imported into an empty database. Create a new database with a different name, or back up and remove the existing database before retrying.
+```text
+wallet/migrations/
+```
+
+are the source of truth for the database tables.
